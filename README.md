@@ -307,3 +307,10 @@ Note that the Docker images are really big (approx. 10 GB), and not all LTS
 versions have a Docker image (they tend to lag behind).  We also recommend
 against using this with Docker's _devicemapper_ storage driver, since its
 default settings have trouble with images this big.
+
+Alternatively, you can add stack into your a docker development image.
+There is an example Dockerfile in the repo that adds stack on top of a base haskell image.
+
+    cp etc/docker/haskell-stack/Dockerfile ./
+    docker build -t haskell-stack:7.8 .
+    docker run -i -t haskell-stack:7.8 /bin/bash
