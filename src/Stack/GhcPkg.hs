@@ -27,6 +27,7 @@ import           Control.Monad.Catch
 import           Control.Monad.IO.Class
 import           Control.Monad.Logger
 import           Control.Monad.Trans.Control
+import           Data.ByteString.Char8 (ByteString)
 import qualified Data.ByteString.Char8 as S8
 import           Data.Either
 import           Data.List
@@ -103,13 +104,19 @@ packageDbFlags pkgDbs =
           "--no-user-package-db"
         : map (\x -> ("--package-db=" ++ toFilePath x)) pkgDbs
 
+-- | Specify the package name.
+data GhcPkgNameSpecify
+    = SpecifyIPID ByteString
+    | SpecifyPackageIdentifier PackageIdentifier
+    | SpecifyPackageName PackageName
+
 -- | Get the value of a field of the package.
 findGhcPkgField
     :: (MonadIO m, MonadLogger m, MonadBaseControl IO m, MonadCatch m, MonadThrow m)
     => EnvOverride
     -> WhichCompiler
     -> [Path Abs Dir] -- ^ package databases
-    -> Text
+    -> GhcPkgNameSpecify
     -> Text
     -> m (Maybe Text)
 findGhcPkgField menv wc pkgDbs name field = do
@@ -118,7 +125,12 @@ findGhcPkgField menv wc pkgDbs name field = do
             menv
             wc
             pkgDbs
-            ["field", "--simple-output", T.unpack name, T.unpack field]
+            (["field", "--simple-output"] ++
+             (case name of
+                  SpecifyPackageName name -> [packageNameString name]
+                  SpecifyIPID ipid -> [S8.unpack ipid]
+                  SpecifyPackageIdentifier n -> [packageIdentifierString n,"--ipid"]) ++
+             [T.unpack field])
     return $
         case result of
             Left{} -> Nothing
@@ -135,10 +147,15 @@ findGhcPkgId :: (MonadIO m, MonadLogger m, MonadBaseControl IO m, MonadCatch m, 
              -> PackageName
              -> m (Maybe GhcPkgId)
 findGhcPkgId menv wc pkgDbs name = do
-    mpid <- findGhcPkgField menv wc pkgDbs (packageNameText name) "id"
-    case mpid of
-        Just !pid -> return (parseGhcPkgId (T.encodeUtf8 pid))
-        _ -> return Nothing
+    mver <- findGhcPkgField menv wc pkgDbs (SpecifyPackageName name) "version" 
+    mipid <- findGhcPkgField menv wc pkgDbs (SpecifyPackageName name) "id" 
+    return
+        (do versionString <- fmap T.unpack mver
+            version <- parseVersionFromString versionString
+            ipidByteString <- mipid
+            parseInstalledPackageId
+                (PackageIdentifier name version)
+                (T.encodeUtf8 ipidByteString))
 
 -- | Get the Haddock HTML documentation path of the package.
 findGhcPkgHaddockHtml :: (MonadIO m, MonadLogger m, MonadBaseControl IO m, MonadCatch m, MonadThrow m)
@@ -148,7 +165,7 @@ findGhcPkgHaddockHtml :: (MonadIO m, MonadLogger m, MonadBaseControl IO m, Monad
                       -> PackageIdentifier
                       -> m (Maybe (Path Abs Dir))
 findGhcPkgHaddockHtml menv wc pkgDbs pkgId = do
-    mpath <- findGhcPkgField menv wc pkgDbs (packageIdentifierText pkgId) "haddock-html"
+    mpath <- findGhcPkgField menv wc pkgDbs (SpecifyPackageIdentifier pkgId) "haddock-html"
     case mpath of
         Just !path0 -> do
             let path = T.unpack path0
@@ -189,10 +206,39 @@ findGhcPkgDepends :: (MonadIO m, MonadLogger m, MonadBaseControl IO m, MonadCatc
                   -> PackageIdentifier
                   -> m [GhcPkgId]
 findGhcPkgDepends menv wc pkgDbs pkgId = do
-    mdeps <- findGhcPkgField menv wc pkgDbs (packageIdentifierText pkgId) "depends"
+    mdeps <-
+        findGhcPkgField
+            menv
+            wc
+            pkgDbs
+            (SpecifyPackageIdentifier pkgId)
+            "depends"
     case mdeps of
-        Just !deps -> return (mapMaybe (parseGhcPkgId . T.encodeUtf8) (T.words deps))
+        Just !deps ->
+            liftM
+                catMaybes
+                (mapM
+                     (findGhcPkgIdByInstalledId menv wc pkgDbs . T.encodeUtf8)
+                     (T.words deps))
         _ -> return []
+
+-- | Find a full 'GhcPkgId' (name-ver-hash) from the hash.
+findGhcPkgIdByInstalledId
+    :: (MonadIO m, MonadLogger m, MonadBaseControl IO m, MonadCatch m, MonadThrow m)
+    => EnvOverride
+    -> WhichCompiler
+    -> [Path Abs Dir] -- ^ package databases
+    -> ByteString
+    -> m (Maybe GhcPkgId)
+findGhcPkgIdByInstalledId menv wc pkgDbs ipid = do
+    mname <- findGhcPkgField menv wc pkgDbs (SpecifyIPID ipid) "name"
+    mversion <- findGhcPkgField menv wc pkgDbs (SpecifyIPID ipid) "version"
+    return
+        (do versionStr <- mversion
+            version <- parseVersionFromString (T.unpack versionStr)
+            nameString <- mname
+            name <- parsePackageName (T.encodeUtf8 nameString)
+            parseInstalledPackageId (PackageIdentifier name version) ipid)
 
 unregisterGhcPkgId :: (MonadIO m, MonadLogger m, MonadThrow m, MonadCatch m, MonadBaseControl IO m)
                     => EnvOverride

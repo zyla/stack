@@ -6,8 +6,7 @@
 
 module Stack.Types.GhcPkgId
   (GhcPkgId
-  ,ghcPkgIdParser
-  ,parseGhcPkgId
+  ,parseInstalledPackageId
   ,ghcPkgIdString
   ,ghcPkgIdPackageIdentifier)
   where
@@ -49,15 +48,24 @@ instance NFData GhcPkgId where
 instance Show GhcPkgId where
   show = show . ghcPkgIdString
 
+-- | The JSON instance EXPECTS the 'PackageIdentifier' information.
 instance FromJSON GhcPkgId where
   parseJSON = withText "GhcPkgId" $ \t ->
     case parseGhcPkgId $ encodeUtf8 t of
       Left e -> fail $ show (e, t)
       Right x -> return x
 
+-- | The JSON instance INCLUDES the 'PackageIdentifier' information.
 instance ToJSON GhcPkgId where
   toJSON g =
     toJSON (ghcPkgIdString g)
+
+-- | Parse just the installed package hash, a string of any format,
+-- and combine with it the given 'PackageIdentifier'.
+parseInstalledPackageId
+    :: MonadThrow m
+    => PackageIdentifier -> ByteString -> m GhcPkgId
+parseInstalledPackageId p = return . GhcPkgId p
 
 -- | Convenient way to parse a package name from a bytestring.
 parseGhcPkgId :: MonadThrow m => ByteString -> m GhcPkgId
@@ -76,7 +84,7 @@ ghcPkgIdParser =
      return (GhcPkgId ident bytes)
   where isAlphaNum c = isLetter c || isDigit c
 
--- | Get a string representation of GHC package id.
+-- | Get a string representation of GHC package id, which consists of name-ver-hash.
 ghcPkgIdString :: GhcPkgId -> String
 ghcPkgIdString (GhcPkgId ident x) =
   packageIdentifierString ident ++ "-" ++ S8.unpack x
