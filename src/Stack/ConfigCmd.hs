@@ -5,10 +5,13 @@
 -- | Make changes to the stack yaml file
 
 module Stack.ConfigCmd
-       (ConfigCmdSet(..)
-       ,cfgCmdSet
-       ,cfgCmdSetName
-       ,cfgCmdName) where
+       ( ConfigCmdAdd(..)
+       , ConfigCmdSet(..)
+       , cfgCmdName
+       , cfgCmdAdd
+       , cfgCmdAddName
+       , cfgCmdSet
+       , cfgCmdSetName) where
 
 import           Control.Monad.Catch (MonadMask, throwM, MonadThrow)
 import           Control.Monad.IO.Class
@@ -24,7 +27,21 @@ import           Stack.BuildPlan
 import           Stack.Init
 import           Stack.Types
 
+data ConfigCmdAdd = ConfigCmdAddExtraDep PackageName
 data ConfigCmdSet = ConfigCmdSetResolver AbstractResolver
+
+cfgCmdAdd :: ( MonadIO m
+             , MonadBaseControl IO m
+             , MonadMask m
+             , MonadReader env m
+             , HasConfig env
+             , HasBuildConfig env
+             , HasHttpManager env
+             , HasGHCVariant env
+             , MonadThrow m
+             , MonadLogger m)
+             => ConfigCmdSet -> m ()
+cfgCmdAdd = undefined
 
 cfgCmdSet :: ( MonadIO m
              , MonadBaseControl IO m
@@ -66,3 +83,6 @@ cfgCmdName = "config"
 
 cfgCmdSetName :: String
 cfgCmdSetName = "set"
+
+cfgCmdAddName :: String
+cfgCmdAddName = "add"

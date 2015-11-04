@@ -351,11 +351,16 @@ main = withInterpreterArgs stackProgName $ \args isInterpreter -> do
                 ConfigCmd.cfgCmdName
                 "Subcommands specific to modifying stack.yaml files"
                 cmdFooter
-                (addCommand ConfigCmd.cfgCmdSetName
-                            "Sets a field in the project's stack.yaml to value"
-                            cmdFooter
-                            cfgSetCmd
-                            configCmdSetParser)
+                (do addCommand ConfigCmd.cfgCmdSetName
+                               "Sets a field in the project's stack.yaml to value"
+                               cmdFooter
+                               cfgSetCmd
+                               configCmdSetParser
+                    addCommand ConfigCmd.cfgCmdAddName
+                               "Adds a package or extra-dep to the project's stack.yaml"
+                               cmdFooter
+                               cfgAddCmd
+                               configCmdAddParser)
              addSubCommands
                Image.imgCmdName
                "Subcommands specific to imaging (EXPERIMENTAL)"
@@ -975,6 +980,9 @@ dockerCleanupCmd cleanupOpts go@GlobalOpts{..} = do
      runStackTGlobal manager (lcConfig lc) go $
         Docker.preventInContainer $
             Docker.cleanup cleanupOpts
+
+cfgAddCmd :: ConfigCmd.ConfigCmdAdd -> GlobalOpts -> IO ()
+cfgAddCmd co go@GlobalOpts{..} = undefined
 
 cfgSetCmd :: ConfigCmd.ConfigCmdSet -> GlobalOpts -> IO ()
 cfgSetCmd co go@GlobalOpts{..} = do

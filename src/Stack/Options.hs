@@ -4,6 +4,7 @@ module Stack.Options
     (Command(..)
     ,benchOptsParser
     ,buildOptsParser
+    ,configCmdAddParser
     ,configCmdSetParser
     ,configOptsParser
     ,dockerOptsParser
@@ -756,6 +757,9 @@ pvpBoundsOption =
                 readerError e
             Right v ->
                 return v
+
+configCmdAddParser :: Parser ConfigCmdAdd
+configCmdAddParser = undefined
 
 configCmdSetParser :: Parser ConfigCmdSet
 configCmdSetParser =
