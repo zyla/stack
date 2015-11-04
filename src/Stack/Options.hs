@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PartialTypeSignatures #-}
 
 module Stack.Options
     (Command(..)
@@ -759,7 +760,33 @@ pvpBoundsOption =
                 return v
 
 configCmdAddParser :: Parser ConfigCmdAdd
-configCmdAddParser = undefined
+configCmdAddParser =
+    fromM
+        (do field <-
+                oneM
+                    (strArgument
+                         (metavar "FIELD PACKAGE"))
+            oneM (fieldToValParser field))
+  where
+    fieldToValParser :: String -> Parser ConfigCmdAdd
+    fieldToValParser s =
+        case s of
+            "extra-dep" ->
+                ConfigCmdAddExtraDep <$>
+                argument
+                    readPackage
+                    idm
+            _ ->
+                error
+                    "parse stack config set: only add extra-dep is implemented"
+
+-- | Reader for a package name
+readPackage :: ReadM PackageName
+readPackage = do
+    pn <- readerAsk
+    case parsePackageNameFromString pn of
+        Nothing -> readerError $ "Invalid package name: " ++ pn
+        Just x -> return x
 
 configCmdSetParser :: Parser ConfigCmdSet
 configCmdSetParser =
@@ -779,7 +806,7 @@ configCmdSetParser =
                     readAbstractResolver
                     idm
             _ ->
-                error "parse stack config set field: only set resolver is implemented"
+                error "parse stack config set: only set resolver is implemented"
 
 -- | If argument is True, hides the option from usage and help
 hideMods :: Bool -> Mod f a
