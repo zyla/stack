@@ -982,16 +982,18 @@ dockerCleanupCmd cleanupOpts go@GlobalOpts{..} = do
             Docker.cleanup cleanupOpts
 
 cfgAddCmd :: ConfigCmd.ConfigCmdAdd -> GlobalOpts -> IO ()
-cfgAddCmd co go@GlobalOpts{..} = undefined
+cfgAddCmd co go@GlobalOpts{..} =
+    withBuildConfig
+        go
+        (runReaderT
+             (cfgCmdAdd co) =<< ask)
 
 cfgSetCmd :: ConfigCmd.ConfigCmdSet -> GlobalOpts -> IO ()
-cfgSetCmd co go@GlobalOpts{..} = do
-    withBuildConfigAndLock
+cfgSetCmd co go@GlobalOpts{..} =
+    withBuildConfig
         go
-        (\_ -> do env <- ask
-                  runReaderT
-                      (cfgCmdSet co)
-                      env)
+        (runReaderT
+             (cfgCmdSet co) =<< ask)
 
 imgDockerCmd :: Bool -> GlobalOpts -> IO ()
 imgDockerCmd rebuild go@GlobalOpts{..} = do

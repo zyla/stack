@@ -40,7 +40,7 @@ cfgCmdAdd :: ( MonadIO m
              , HasGHCVariant env
              , MonadThrow m
              , MonadLogger m)
-             => ConfigCmdSet -> m ()
+             => ConfigCmdAdd -> m ()
 cfgCmdAdd = undefined
 
 cfgCmdSet :: ( MonadIO m
