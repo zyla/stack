@@ -774,18 +774,18 @@ configCmdAddParser =
             "extra-dep" ->
                 ConfigCmdAddExtraDep <$>
                 argument
-                    readPackage
+                    readPackageIdentifier
                     idm
             _ ->
                 error
                     "parse stack config set: only add extra-dep is implemented"
 
--- | Reader for a package name
-readPackage :: ReadM PackageName
-readPackage = do
+-- | Reader for a package identifier, e.g. foo-0.1.0
+readPackageIdentifier :: ReadM PackageIdentifier
+readPackageIdentifier = do
     pn <- readerAsk
-    case parsePackageNameFromString pn of
-        Nothing -> readerError $ "Invalid package name: " ++ pn
+    case parsePackageIdentifierFromString pn of
+        Nothing -> readerError $ "Invalid package identifier: " ++ pn ++ "\nUse the form <name>-<version>, e.g. foo-0.1.0.0"
         Just x -> return x
 
 configCmdSetParser :: Parser ConfigCmdSet

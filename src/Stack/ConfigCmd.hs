@@ -20,6 +20,10 @@ import           Control.Monad.Reader (MonadReader, asks)
 import           Control.Monad.Trans.Control (MonadBaseControl)
 import qualified Data.ByteString as S
 import qualified Data.HashMap.Strict as HMap
+import           Data.Monoid
+import           Data.Text (Text)
+import           Data.Vector (Vector)
+import qualified Data.Vector as V
 import qualified Data.Yaml as Yaml
 import           Network.HTTP.Client.Conduit (HasHttpManager)
 import           Path
@@ -27,7 +31,7 @@ import           Stack.BuildPlan
 import           Stack.Init
 import           Stack.Types
 
-data ConfigCmdAdd = ConfigCmdAddExtraDep PackageName
+data ConfigCmdAdd = ConfigCmdAddExtraDep PackageIdentifier
 data ConfigCmdSet = ConfigCmdSetResolver AbstractResolver
 
 cfgCmdAdd :: ( MonadIO m
@@ -41,7 +45,36 @@ cfgCmdAdd :: ( MonadIO m
              , MonadThrow m
              , MonadLogger m)
              => ConfigCmdAdd -> m ()
-cfgCmdAdd = undefined
+cfgCmdAdd (ConfigCmdAddExtraDep newDep) = do
+    stackYaml <- fmap bcStackYaml (asks getBuildConfig)
+    let stackYamlFp =
+            toFilePath stackYaml
+    -- We don't need to worry about checking for a valid yaml here
+    (projectYamlConfig :: Yaml.Object) <-
+        liftIO (Yaml.decodeFileEither stackYamlFp) >>=
+        either throwM return
+    extraDepsArr <- yamlExtraDeps projectYamlConfig
+    let newDepTextArr = V.singleton (packageIdentifierText newDep)
+        projectYamlConfig' =
+            HMap.insert
+                "extra-deps"
+                (Yaml.toJSON $ extraDepsArr <> newDepTextArr)
+                projectYamlConfig
+    liftIO
+        (S.writeFile
+             stackYamlFp
+             (Yaml.encode projectYamlConfig'))
+    return ()
+
+    
+yamlExtraDeps :: MonadThrow m => Yaml.Object -> m (Vector Text)
+yamlExtraDeps stackYaml =
+    either
+        error
+        return
+        (Yaml.parseEither
+             (\obj -> obj Yaml..: "extra-deps")
+             stackYaml)
 
 cfgCmdSet :: ( MonadIO m
              , MonadBaseControl IO m
