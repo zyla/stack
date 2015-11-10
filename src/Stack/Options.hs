@@ -1,5 +1,4 @@
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE PartialTypeSignatures #-}
 
 module Stack.Options
     (Command(..)
@@ -801,7 +800,7 @@ configCmdSetParser =
                        (ConfigCmdSetResolver <$> readAbstractResolver)
                        (metavar "RESOLVER"))
                   (progDesc "Set the project's resolver, e.g. lts-3.0"))) <|>
-    many (argument readFieldValue (metavar "FIELD:VALUE"))
+    (argument readFieldValue (metavar "FIELD:VALUE"))
 
 readFieldValue :: ReadM ConfigCmdSet
 readFieldValue = do
