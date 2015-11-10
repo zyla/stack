@@ -790,23 +790,25 @@ readPackageIdentifier = do
 
 configCmdSetParser :: Parser ConfigCmdSet
 configCmdSetParser =
-    fromM
-        (do field <-
-                oneM
-                    (strArgument
-                         (metavar "FIELD VALUE"))
-            oneM (fieldToValParser field))
-  where
-    fieldToValParser :: String -> Parser ConfigCmdSet
-    fieldToValParser s =
-        case s of
-            "resolver" ->
-                ConfigCmdSetResolver <$>
-                argument
-                    readAbstractResolver
-                    idm
-            _ ->
-                error "parse stack config set: only set resolver is implemented"
+    subparser
+        (command
+             "resolver"
+             (info
+                  (argument
+                       (ConfigCmdSetResolver <$> readAbstractResolver)
+                       (metavar "RESOLVER"))
+                  (progDesc "Sets the project's resolver"))) <|>
+    (fromM $ do f <- oneM
+                    (textArgument
+                             (metavar "FIELD VALUE" <> help "Set a FIELD to VALUE"))
+                v <- oneM
+                         (textArgument idm)
+                return $ ConfigCmdSetField f v)
+
+    -- where readConfigFieldVal = do
+    --          field <- readerAsk
+    --          val <- readerAsk
+    --          return $ ConfigCmdSetField (T.pack field) (T.pack val)
 
 -- | If argument is True, hides the option from usage and help
 hideMods :: Bool -> Mod f a

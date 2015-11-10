@@ -352,7 +352,8 @@ main = withInterpreterArgs stackProgName $ \args isInterpreter -> do
                 "Subcommands specific to modifying stack.yaml files"
                 cmdFooter
                 (do addCommand ConfigCmd.cfgCmdSetName
-                               "Sets a field in the project's stack.yaml to value"
+                               ("Set a field in the project's stack.yaml," <>
+                                " some fields have a special command")
                                cmdFooter
                                cfgSetCmd
                                configCmdSetParser
