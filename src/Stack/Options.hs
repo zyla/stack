@@ -761,31 +761,22 @@ pvpBoundsOption =
 
 configCmdAddParser :: Parser ConfigCmdAdd
 configCmdAddParser =
-    fromM
-        (do field <-
-                oneM
-                    (strArgument
-                         (metavar "FIELD PACKAGE"))
-            oneM (fieldToValParser field))
-  where
-    fieldToValParser :: String -> Parser ConfigCmdAdd
-    fieldToValParser s =
-        case s of
-            "extra-dep" ->
-                ConfigCmdAddExtraDep <$>
-                argument
-                    readPackageIdentifier
-                    idm
-            _ ->
-                error
-                    "parse stack config set: only add extra-dep is implemented"
+    subparser
+        (command
+             "extra-dep"
+             (info
+                  (argument
+                       (ConfigCmdAddExtraDep <$> readPackageIdentifier)
+                       (metavar "NAME-VERSION"))
+                  (progDesc "Add an extra dependency to the project")))
+
 
 -- | Reader for a package identifier, e.g. foo-0.1.0
 readPackageIdentifier :: ReadM PackageIdentifier
 readPackageIdentifier = do
     pn <- readerAsk
     case parsePackageIdentifierFromString pn of
-        Nothing -> readerError $ "Invalid package identifier: " ++ pn ++ "\nUse the form <name>-<version>, e.g. foo-0.1.0.0"
+        Nothing -> readerError $ "Invalid package identifier: " ++ pn ++ "\nUse the form <NAME>-<VERSION>, e.g. foo-0.1.0.0"
         Just x -> return x
 
 configCmdSetParser :: Parser ConfigCmdSet
@@ -797,7 +788,7 @@ configCmdSetParser =
                   (argument
                        (ConfigCmdSetResolver <$> readAbstractResolver)
                        (metavar "RESOLVER"))
-                  (progDesc "Sets the project's resolver"))) <|>
+                  (progDesc "Set the project's resolver"))) <|>
     (fromM $ do f <- oneM
                     (textArgument
                              (metavar "FIELD VALUE" <> help "Set a FIELD to VALUE"))

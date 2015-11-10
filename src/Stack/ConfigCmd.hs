@@ -62,7 +62,7 @@ cfgCmdAdd (ConfigCmdAddExtraDep newDep) = do
         (S.writeFile
              stackYamlFp
              (Yaml.encode projectYamlConfig'))
-    return ()    
+    return ()
 yamlExtraDeps :: MonadThrow m
               => Yaml.Object -> m (Vector Text)
 yamlExtraDeps stackYaml =
