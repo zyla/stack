@@ -34,7 +34,7 @@ import           Stack.Types
 data ConfigCmdAdd = ConfigCmdAddExtraDep PackageIdentifier
 data ConfigCmdSet
     = ConfigCmdSetResolver AbstractResolver
-    | ConfigCmdSetField Text Text -- Field Value
+    | ConfigCmdSetFieldValue Text Text -- Field Value
 
 cfgCmdAdd :: (MonadIO m, MonadBaseControl IO m, MonadMask m, MonadReader env m, HasConfig env, HasBuildConfig env, HasHttpManager env, HasGHCVariant env, MonadThrow m, MonadLogger m)
           => ConfigCmdAdd -> m ()
@@ -100,7 +100,7 @@ cfgCmdSet (ConfigCmdSetResolver newResolver) = do
              stackYamlFp
              (Yaml.encode projectYamlConfig'))
     return ()
-cfgCmdSet (ConfigCmdSetField _ _) = error "stack config set FIELD VALUE not implemented"
+cfgCmdSet (ConfigCmdSetFieldValue _ _) = error "stack config set FIELD VALUE not implemented"
 
 cfgCmdName :: String
 cfgCmdName = "config"

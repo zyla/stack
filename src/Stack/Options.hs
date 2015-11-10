@@ -40,20 +40,20 @@ import           Data.Text.Read (decimal)
 import           Distribution.Version (anyVersion)
 import           Options.Applicative
 import           Options.Applicative.Args
-import           Options.Applicative.Builder.Extra
-import           Options.Applicative.Types (fromM, oneM, readerAsk)
-import           Stack.Config (packagesParser)
-import           Stack.ConfigCmd
-import           Stack.Constants (stackProgName)
-import           Stack.Coverage (HpcReportOpts(..))
-import           Stack.Docker
+import Options.Applicative.Builder.Extra
+import Options.Applicative.Types (readerAsk)
+import Stack.Config (packagesParser)
+import Stack.ConfigCmd
+import Stack.Constants (stackProgName)
+import Stack.Coverage (HpcReportOpts(..))
+import Stack.Docker
 import qualified Stack.Docker as Docker
-import           Stack.Dot
-import           Stack.Ghci (GhciOpts(..))
-import           Stack.Init
-import           Stack.New
-import           Stack.Types
-import           Stack.Types.TemplateName
+import Stack.Dot
+import Stack.Ghci (GhciOpts(..))
+import Stack.Init
+import Stack.New
+import Stack.Types
+import Stack.Types.TemplateName
 
 -- | Command sum type for conditional arguments.
 data Command
@@ -66,23 +66,30 @@ data Command
 
 -- | Parser for bench arguments.
 benchOptsParser :: Parser BenchmarkOpts
-benchOptsParser = BenchmarkOpts
-        <$> optional (strOption (long "benchmark-arguments" <>
-                                 metavar "BENCH_ARGS" <>
-                                 help ("Forward BENCH_ARGS to the benchmark suite. " <>
-                                       "Supports templates from `cabal bench`")))
-        <*> switch (long "no-run-benchmarks" <>
-                   help "Disable running of benchmarks. (Benchmarks will still be built.)")
+benchOptsParser =
+    BenchmarkOpts <$>
+    optional
+        (strOption
+             (long "benchmark-arguments" <>
+              metavar "BENCH_ARGS" <>
+              help
+                  ("Forward BENCH_ARGS to the benchmark suite. " <>
+                   "Supports templates from `cabal bench`"))) <*>
+    switch
+        (long "no-run-benchmarks" <>
+         help "Disable running of benchmarks. (Benchmarks will still be built.)")
 
 addCoverageFlags :: BuildOpts -> BuildOpts
 addCoverageFlags bopts
-    | toCoverage $ boptsTestOpts bopts
-        = bopts { boptsGhcOptions = "-fhpc" : boptsGhcOptions bopts }
-    | otherwise = bopts
+  | toCoverage $ boptsTestOpts bopts =
+      bopts
+      { boptsGhcOptions = "-fhpc" : boptsGhcOptions bopts
+      }
+  | otherwise =
+      bopts
 
 -- | Parser for build arguments.
-buildOptsParser :: Command
-                -> Parser BuildOpts
+buildOptsParser :: Command -> Parser BuildOpts
 buildOptsParser cmd =
             fmap addCoverageFlags $
             BuildOpts <$> target <*> libProfiling <*> exeProfiling <*>
@@ -760,8 +767,10 @@ pvpBoundsOption =
                 return v
 
 configCmdAddParser :: Parser ConfigCmdAdd
+
+
 configCmdAddParser =
-    subparser
+    hsubparser
         (command
              "extra-dep"
              (info
@@ -770,36 +779,36 @@ configCmdAddParser =
                        (metavar "NAME-VERSION"))
                   (progDesc "Add an extra dependency to the project")))
 
-
 -- | Reader for a package identifier, e.g. foo-0.1.0
 readPackageIdentifier :: ReadM PackageIdentifier
 readPackageIdentifier = do
     pn <- readerAsk
     case parsePackageIdentifierFromString pn of
-        Nothing -> readerError $ "Invalid package identifier: " ++ pn ++ "\nUse the form <NAME>-<VERSION>, e.g. foo-0.1.0.0"
-        Just x -> return x
+        Nothing ->
+            readerError $ "Invalid package identifier: " ++
+                          pn ++
+                          "\nUse the form <NAME>-<VERSION>, e.g. foo-0.1.0.0"
+        Just x ->
+            return x
 
 configCmdSetParser :: Parser ConfigCmdSet
 configCmdSetParser =
-    subparser
+    hsubparser
         (command
              "resolver"
              (info
                   (argument
                        (ConfigCmdSetResolver <$> readAbstractResolver)
                        (metavar "RESOLVER"))
-                  (progDesc "Set the project's resolver"))) <|>
-    (fromM $ do f <- oneM
-                    (textArgument
-                             (metavar "FIELD VALUE" <> help "Set a FIELD to VALUE"))
-                v <- oneM
-                         (textArgument idm)
-                return $ ConfigCmdSetField f v)
+                  (progDesc "Set the project's resolver, e.g. lts-3.0"))) <|>
+    many (argument readFieldValue (metavar "FIELD:VALUE"))
 
-    -- where readConfigFieldVal = do
-    --          field <- readerAsk
-    --          val <- readerAsk
-    --          return $ ConfigCmdSetField (T.pack field) (T.pack val)
+readFieldValue :: ReadM ConfigCmdSet
+readFieldValue = do
+    s <- readerAsk
+    case break (== ':') s of
+        (f, ':':v) -> return $ ConfigCmdSetFieldValue (T.pack f) (T.pack v)
+        _ -> readerError "Must have a colon"
 
 -- | If argument is True, hides the option from usage and help
 hideMods :: Bool -> Mod f a
