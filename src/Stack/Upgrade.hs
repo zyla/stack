@@ -42,19 +42,15 @@ upgrade gitRepo mresolver = withCanonicalizedSystemTempDirectory "stack-upgrade"
       Just repo -> do
         remote <- liftIO $ readProcess "git" ["ls-remote", repo, "master"] []
         let latestCommit = head . words $ remote
-        if latestCommit == $gitHash then do
-          $logInfo "Already up-to-date, no upgrade required"
-          return Nothing
-        else do $logInfo "Cloning stack"
-                runIn tmp "git" menv
-                    [ "clone"
-                    , repo
-                    , "stack"
-                    , "--depth"
-                    , "1"
-                    ]
-                    Nothing
-                return $ Just $ tmp </> $(mkRelDir "stack")
+        if latestCommit == $gitHash
+          then do
+            $logInfo "Already up-to-date, no upgrade required"
+            return Nothing
+          else do
+            $logInfo "Cloning stack"
+            let args = [ "clone", repo , "stack", "--depth", "1"]
+            runCmd (CMD (Just tmp) "git" menv args) Nothing
+            return $ Just $ tmp </> $(mkRelDir "stack")
       Nothing -> do
         updateAllIndices menv
         caches <- getPackageCaches menv
