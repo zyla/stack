@@ -273,7 +273,7 @@ getSetupExe setupHs tmpdir = do
                     , toFilePath tmpOutputPath
                     ] ++
                     ["-build-runner" | wc == Ghcjs]
-            runCmd (CMD (Just tmpdir) (compilerExeName wc) menv args) Nothing
+            runCmd' (\cp -> cp { std_out = UseHandle stderr }) (CMD (Just tmpdir) (compilerExeName wc) menv args) Nothing
             when (wc == Ghcjs) $ renameDir tmpJsExePath jsExePath
             renameFile tmpExePath exePath
             return $ Just exePath
