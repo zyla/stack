@@ -10,6 +10,7 @@
 
 module System.Process.Run
     (runCmd
+    ,runCmd'
     ,callProcess
     ,callProcess'
     ,ProcessExitedUnsuccessfully)
@@ -39,8 +40,16 @@ runCmd :: forall (m :: * -> *).
       => CMD
       -> Maybe Text  -- ^ optional additional error message
       -> m ()
-runCmd cmd@(CMD{..}) mbErrMsg = do
-    result <- try (callProcess cmd)
+runCmd = runCmd' id
+
+runCmd' :: forall (m :: * -> *).
+         (MonadLogger m,MonadIO m,MonadBaseControl IO m)
+      => (CreateProcess -> CreateProcess)
+      -> CMD
+      -> Maybe Text  -- ^ optional additional error message
+      -> m ()
+runCmd' modCP cmd@(CMD{..}) mbErrMsg = do
+    result <- try (callProcess' modCP cmd)
     case result of
         Left (ProcessExitedUnsuccessfully _ ec) -> do
             $logError $
