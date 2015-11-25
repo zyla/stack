@@ -19,7 +19,7 @@ import           System.Process.Log
 import           Control.Exception.Lifted
 import           Data.Streaming.Process (ProcessExitedUnsuccessfully(..))
 import           System.Exit
-import           System.Process.Run (callProcess)
+import           System.Process.Run (callProcess, Cmd(..))
 #else
 import           System.Process.Read (envHelper, preProcess)
 import           System.Posix.Process (executeFile)
@@ -51,7 +51,7 @@ exec envSettings cmd0 args = do
     menv <- liftIO (configEnvOverride config envSettings)
     $logProcessRun cmd0 args
 #ifdef WINDOWS
-    e <- try (callProcess Nothing menv cmd0 args)
+    e <- try (callProcess (Cmd Nothing cmd0 menv args))
     liftIO $ case e of
         Left (ProcessExitedUnsuccessfully _ ec) -> exitWith ec
         Right () -> exitSuccess
