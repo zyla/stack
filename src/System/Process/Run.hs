@@ -31,7 +31,7 @@ import           Prelude -- Fix AMP warning
 import           System.Exit (exitWith, ExitCode (..))
 import qualified System.Process
 import           System.Process.Read
-import           Path (Dir, Abs, File, Path, toFilePath)
+import           Path (Dir, Abs, Path)
 
 -- | Cmd holds common infos needed to running a process in most cases
 data Cmd = Cmd
