@@ -13,7 +13,9 @@ module System.Process.Run
     ,runCmd'
     ,callProcess
     ,callProcess'
-    ,ProcessExitedUnsuccessfully)
+    ,ProcessExitedUnsuccessfully
+    ,Cmd(..)
+    )
     where
 
 import           Control.Exception.Lifted
@@ -29,7 +31,15 @@ import           Prelude -- Fix AMP warning
 import           System.Exit (exitWith, ExitCode (..))
 import qualified System.Process
 import           System.Process.Read
-import           Stack.Types (Cmd(..))
+import           Path (Dir, Abs, File, Path, toFilePath)
+
+-- | Cmd holds common infos needed to running a process in most cases
+data Cmd = Cmd
+  { cmdDirectoryToRunIn :: Maybe (Path Abs Dir) -- ^ directory to run in
+  , cmdCommandToRun :: FilePath -- ^ command to run
+  , cmdEnvOverride::EnvOverride
+  , cmdCommandLineArguments :: [String] -- ^ command line arguments
+  }
 
 -- | Run the given command in the given directory, inheriting stdout and stderr.
 --

@@ -87,7 +87,7 @@ import           System.FilePath (searchPathSeparator)
 import qualified System.FilePath as FP
 import           System.Process (rawSystem)
 import           System.Process.Read
-import           System.Process.Run (runCmd)
+import           System.Process.Run (runCmd, Cmd(..))
 import           Text.Printf (printf)
 
 -- | Default location of the stack-setup.yaml file

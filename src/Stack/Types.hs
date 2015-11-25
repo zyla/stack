@@ -17,4 +17,3 @@ import Stack.Types.Image as X
 import Stack.Types.Build as X
 import Stack.Types.Package as X
 import Stack.Types.Compiler as X
-import Stack.Types.Cmd as X
