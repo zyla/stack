@@ -349,7 +349,7 @@ runContainerAndExit getCmdArgs
        oldHandler <- liftIO $ installHandler sig (Catch sigHandler) Nothing
        return (sig, oldHandler)
 #endif
-     let cmd = CMD Nothing
+     let cmd = Cmd Nothing
                  "docker"
                  envOverride
                  (concat [["start"]
@@ -648,7 +648,7 @@ pullImage envOverride docker image =
   do $logInfo (concatT ["Pulling image from registry: '",image,"'"])
      when (dockerRegistryLogin docker)
           (do $logInfo "You may need to log in."
-              callProcess $ CMD
+              callProcess $ Cmd
                 Nothing
                 "docker"
                 envOverride
@@ -657,7 +657,7 @@ pullImage envOverride docker image =
                    ,maybe [] (\n -> ["--username=" ++ n]) (dockerRegistryUsername docker)
                    ,maybe [] (\p -> ["--password=" ++ p]) (dockerRegistryPassword docker)
                    ,[takeWhile (/= '/') image]]))
-     e <- try (callProcess (CMD Nothing "docker" envOverride ["pull",image]))
+     e <- try (callProcess (Cmd Nothing "docker" envOverride ["pull",image]))
      case e of
        Left (ProcessExitedUnsuccessfully _ _) -> throwM (PullFailedException image)
        Right () -> return ()

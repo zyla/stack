@@ -213,7 +213,7 @@ runTemplateInits dir = do
     case configScmInit config of
         Nothing -> return ()
         Just Git ->
-            catch (callProcess $ CMD (Just dir) "git" menv ["init"])
+            catch (callProcess $ Cmd (Just dir) "git" menv ["init"])
                   (\(_ :: ProcessExitedUnsuccessfully) ->
                          $logInfo "git init failed to run, ignoring ...")
 

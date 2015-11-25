@@ -119,7 +119,7 @@ createDockerImage dir = do
                              (imageName (parent (parent dir)))
                              (imgDockerImageName =<< dockerConfig)
                        , toFilePathNoTrailingSep dir]
-            callProcess $ CMD Nothing "docker" menv args
+            callProcess $ Cmd Nothing "docker" menv args
 
 
 -- | Extend the general purpose docker image with entrypoints (if
@@ -149,7 +149,7 @@ extendDockerImageWithEntrypoint dir = do
                                     , "ENTRYPOINT [\"/usr/local/bin/" ++
                                       ep ++ "\"]"
                                     , "CMD []"]))
-                      callProcess $ CMD
+                      callProcess $ Cmd
                           Nothing
                           "docker"
                           menv

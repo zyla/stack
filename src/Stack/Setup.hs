@@ -512,7 +512,7 @@ upgradeCabal menv wc = do
                     Nothing -> error "upgradeCabal: Invariant violated, dir missing"
                     Just dir -> return dir
 
-            runCmd (CMD (Just dir) (compilerExeName wc) menv ["Setup.hs"]) Nothing
+            runCmd (Cmd (Just dir) (compilerExeName wc) menv ["Setup.hs"]) Nothing
             platform <- asks getPlatform
             let setupExe = toFilePath $ dir </>
                   (case platform of
@@ -525,9 +525,9 @@ upgradeCabal menv wc = do
                     , installRoot FP.</> name'
                     ]
                 args = ( "configure": map dirArgument (words "lib bin data doc") )
-            runCmd (CMD (Just dir) setupExe menv args) Nothing
-            runCmd (CMD (Just dir) setupExe menv ["build"]) Nothing
-            runCmd (CMD (Just dir) setupExe menv ["install"]) Nothing
+            runCmd (Cmd (Just dir) setupExe menv args) Nothing
+            runCmd (Cmd (Just dir) setupExe menv ["build"]) Nothing
+            runCmd (Cmd (Just dir) setupExe menv ["install"]) Nothing
             $logInfo "New Cabal library installed"
 
 -- | Get the version of the system compiler, if available
@@ -1074,14 +1074,14 @@ installMsys2Windows osKey si archiveFile archiveType destDir = do
     -- I couldn't find this officially documented anywhere, but you need to run
     -- the shell once in order to initialize some pacman stuff. Once that run
     -- happens, you can just run commands as usual.
-    runCmd (CMD (Just destDir) "sh" menv ["--login", "-c", "true"]) Nothing
+    runCmd (Cmd (Just destDir) "sh" menv ["--login", "-c", "true"]) Nothing
 
     -- No longer installing git, it's unreliable
     -- (https://github.com/commercialhaskell/stack/issues/1046) and the
     -- MSYS2-installed version has bad CRLF defaults.
     --
     -- Install git. We could install other useful things in the future too.
-    -- runCmd (CMD (Just destDir) "pacman" menv ["-Sy", "--noconfirm", "git"]) Nothing
+    -- runCmd (Cmd (Just destDir) "pacman" menv ["-Sy", "--noconfirm", "git"]) Nothing
 
 -- | Unpack a compressed tarball using 7zip.  Expects a single directory in
 -- the unpacked results, which is renamed to the destination directory.

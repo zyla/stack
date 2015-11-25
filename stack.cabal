@@ -68,7 +68,7 @@ library
                      Stack.Types
                      Stack.Types.Internal
                      Stack.Types.BuildPlan
-                     Stack.Types.CMD
+                     Stack.Types.Cmd
                      Stack.Types.Compiler
                      Stack.Types.Config
                      Stack.Types.Docker

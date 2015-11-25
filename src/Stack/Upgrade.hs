@@ -49,7 +49,7 @@ upgrade gitRepo mresolver = withCanonicalizedSystemTempDirectory "stack-upgrade"
           else do
             $logInfo "Cloning stack"
             let args = [ "clone", repo , "stack", "--depth", "1"]
-            runCmd (CMD (Just tmp) "git" menv args) Nothing
+            runCmd (Cmd (Just tmp) "git" menv args) Nothing
             return $ Just $ tmp </> $(mkRelDir "stack")
       Nothing -> do
         updateAllIndices menv

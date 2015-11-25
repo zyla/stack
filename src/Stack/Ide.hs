@@ -73,9 +73,9 @@ ide targets useropts = do
     Platform _ os <- asks getPlatform
     when
         (os == OSX)
-        (catch (callProcess (CMD (Just pwd) "stty" menv ["cbreak", "-imaxbel"]))
+        (catch (callProcess (Cmd (Just pwd) "stty" menv ["cbreak", "-imaxbel"]))
                (\(_ :: ProcessExitedUnsuccessfully) -> return ()))
-    callProcess (CMD (Just pwd) "stack-ide" menv args)
+    callProcess (Cmd (Just pwd) "stack-ide" menv args)
   where
     includeDirs pkgopts =
         intercalate

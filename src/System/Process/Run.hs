@@ -29,7 +29,7 @@ import           Prelude -- Fix AMP warning
 import           System.Exit (exitWith, ExitCode (..))
 import qualified System.Process
 import           System.Process.Read
-import           Stack.Types (CMD(..))
+import           Stack.Types (Cmd(..))
 
 -- | Run the given command in the given directory, inheriting stdout and stderr.
 --
@@ -37,7 +37,7 @@ import           Stack.Types (CMD(..))
 -- and then calls 'exitWith' to exit the program.
 runCmd :: forall (m :: * -> *).
          (MonadLogger m,MonadIO m,MonadBaseControl IO m)
-      => CMD
+      => Cmd
       -> Maybe Text  -- ^ optional additional error message
       -> m ()
 runCmd = runCmd' id
@@ -45,10 +45,10 @@ runCmd = runCmd' id
 runCmd' :: forall (m :: * -> *).
          (MonadLogger m,MonadIO m,MonadBaseControl IO m)
       => (CreateProcess -> CreateProcess)
-      -> CMD
+      -> Cmd
       -> Maybe Text  -- ^ optional additional error message
       -> m ()
-runCmd' modCP cmd@(CMD{..}) mbErrMsg = do
+runCmd' modCP cmd@(Cmd{..}) mbErrMsg = do
     result <- try (callProcess' modCP cmd)
     case result of
         Left (ProcessExitedUnsuccessfully _ ec) -> do
@@ -72,7 +72,7 @@ runCmd' modCP cmd@(CMD{..}) mbErrMsg = do
 -- process exits unsuccessfully.
 --
 -- Inherits stdout and stderr.
-callProcess :: (MonadIO m, MonadLogger m) => CMD -> m ()
+callProcess :: (MonadIO m, MonadLogger m) => Cmd -> m ()
 callProcess = callProcess' id
 
 -- | Like 'System.Process.callProcess', but takes an optional working directory and
@@ -81,10 +81,8 @@ callProcess = callProcess' id
 --
 -- Inherits stdout and stderr.
 callProcess' :: (MonadIO m, MonadLogger m)
-             => (CreateProcess -> CreateProcess)
-             -> CMD
-             -> m ()
-callProcess' modCP (CMD wd cmd0 menv args) = do
+             => (CreateProcess -> CreateProcess) -> Cmd -> m ()
+callProcess' modCP (Cmd wd cmd0 menv args) = do
     cmd <- preProcess wd menv cmd0
     let c = modCP $ (proc cmd args) { delegate_ctlc = True
                                     , cwd = fmap toFilePath wd
