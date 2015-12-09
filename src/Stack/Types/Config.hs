@@ -131,7 +131,7 @@ import           Control.Monad.Reader (MonadReader, ask, asks, MonadIO, liftIO)
 import           Data.Aeson.Extended
                  (ToJSON, toJSON, FromJSON, parseJSON, withText, object,
                   (.=), (..:), (..:?), (..!=), Value(String, Object),
-                  withObjectWarnings, WarningParser, Object, jsonSubWarnings, JSONWarning,
+                  withObjectWarnings, DescriptiveParser, Object, jsonSubWarnings, JSONWarning,
                   jsonSubWarningsT, jsonSubWarningsTT)
 import           Data.Attoparsec.Args
 import           Data.Binary (Binary)
@@ -875,7 +875,7 @@ instance FromJSON (ConfigMonoid, [JSONWarning]) where
 -- | Parse a partial configuration.  Used both to parse both a standalone config
 -- file and a project file, so that a sub-parser is not required, which would interfere with
 -- warnings for missing fields.
-parseConfigMonoidJSON :: Object -> WarningParser ConfigMonoid
+parseConfigMonoidJSON :: Object -> DescriptiveParser ConfigMonoid
 parseConfigMonoidJSON obj = do
     configMonoidWorkDir <- obj ..:? configMonoidWorkDirName
     configMonoidDockerOpts <- jsonSubWarnings (obj ..:? configMonoidDockerOptsName ..!= mempty)
@@ -1458,7 +1458,7 @@ instance FromJSON (DownloadInfo, [JSONWarning]) where
     parseJSON = withObjectWarnings "DownloadInfo" parseDownloadInfoFromObject
 
 -- | Parse JSON in existing object for 'DownloadInfo'
-parseDownloadInfoFromObject :: Object -> WarningParser DownloadInfo
+parseDownloadInfoFromObject :: Object -> DescriptiveParser DownloadInfo
 parseDownloadInfoFromObject o = do
     url <- o ..: "url"
     contentLength <- o ..:? "content-length"

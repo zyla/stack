@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings, RecordWildCards, TemplateHaskell, TupleSections #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 -- | Extensions to Aeson parsing of objects.
 module Data.Aeson.Extended (
@@ -7,7 +8,7 @@ module Data.Aeson.Extended (
   , (.:)
   , (.:?)
   -- * JSON Parser that emits warnings
-  , WarningParser
+  , DescriptiveParser
   , JSONWarning (..)
   , withObjectWarnings
   , jsonSubWarnings
@@ -15,12 +16,13 @@ module Data.Aeson.Extended (
   , jsonSubWarningsTT
   , logJSONWarnings
   , tellJSONField
-  , unWarningParser
+  , unDescriptiveParser
   , (..:)
   , (..:?)
   , (..!=)
   ) where
 
+import Control.Applicative
 import Control.Monad.Logger (MonadLogger, logWarn)
 import Control.Monad.Trans (lift)
 import Control.Monad.Trans.Writer.Strict (WriterT, mapWriterT, runWriterT, tell)
@@ -47,39 +49,39 @@ import Prelude -- Fix redundant import warnings
 (.:?) o p = modifyFailure (("failed to parse field '" <> unpack p <> "': ") <>) (o A..:? p)
 {-# INLINE (.:?) #-}
 
--- | 'WarningParser' version of @.:@.
+-- | 'DescriptiveParser' version of @.:@.
 (..:)
     :: FromJSON a
-    => Object -> Text -> WarningParser a
-o ..: k = tellJSONField k >> lift (o .: k)
+    => Object -> Text -> DescriptiveParser a
+o ..: k = tellJSONField k >> DescriptiveParser (lift (o .: k))
 
--- | 'WarningParser' version of @.:?@.
+-- | 'DescriptiveParser' version of @.:?@.
 (..:?)
     :: FromJSON a
-    => Object -> Text -> WarningParser (Maybe a)
-o ..:? k = tellJSONField k >> lift (o .:? k)
+    => Object -> Text -> DescriptiveParser (Maybe a)
+o ..:? k = tellJSONField k >> DescriptiveParser (lift (o .:? k))
 
--- | 'WarningParser' version of @.!=@.
-(..!=) :: WarningParser (Maybe a) -> a -> WarningParser a
+-- | 'DescriptiveParser' version of @.!=@.
+(..!=) :: DescriptiveParser (Maybe a) -> a -> DescriptiveParser a
 wp ..!= d =
-    flip mapWriterT wp $
-    \p ->
-         do a <- fmap snd p
-            fmap (, a) (fmap fst p .!= d)
+    DescriptiveParser(flip mapWriterT (runDescriptiveParser wp) $
+                      \p ->
+                           do a <- fmap snd p
+                              fmap (, a) (fmap fst p .!= d))
 
 -- | Tell warning parser about an expected field, so it doesn't warn about it.
-tellJSONField :: Text -> WarningParser ()
-tellJSONField key = tell (mempty { wpmExpectedFields = Set.singleton key})
+tellJSONField :: Text -> DescriptiveParser ()
+tellJSONField key = DescriptiveParser(tell (mempty { wpmExpectedFields = Set.singleton key}))
 
--- | 'WarningParser' version of 'withObject'.
+-- | 'DescriptiveParser' version of 'withObject'.
 withObjectWarnings :: String
-                   -> (Object -> WarningParser a)
+                   -> (Object -> DescriptiveParser a)
                    -> Value
                    -> Parser (a, [JSONWarning])
 withObjectWarnings expected f =
     withObject expected $
     \obj ->
-         do (a,w) <- runWriterT (f obj)
+         do (a,w) <- runWriterT (runDescriptiveParser (f obj))
             let unrecognizedFields =
                     Set.toList
                         (Set.difference
@@ -92,10 +94,10 @@ withObjectWarnings expected f =
                       [] -> []
                       _ -> [JSONUnrecognizedFields expected unrecognizedFields])
 
--- | Convert a 'WarningParser' to a 'Parser'.
-unWarningParser :: WarningParser a -> Parser a
-unWarningParser wp = do
-    (a,_) <- runWriterT wp
+-- | Convert a 'DescriptiveParser' to a 'Parser'.
+unDescriptiveParser :: DescriptiveParser a -> Parser a
+unDescriptiveParser wp = do
+    (a,_) <- runWriterT (runDescriptiveParser wp)
     return a
 
 -- | Log JSON warnings.
@@ -106,49 +108,51 @@ logJSONWarnings fp =
     mapM_ (\w -> $logWarn ("Warning: " <> T.pack fp <> ": " <> T.pack (show w)))
 
 -- | Handle warnings in a sub-object.
-jsonSubWarnings :: WarningParser (a, [JSONWarning]) -> WarningParser a
+jsonSubWarnings :: DescriptiveParser (a, [JSONWarning]) -> DescriptiveParser a
 jsonSubWarnings f = do
     (result,warnings) <- f
-    tell
-        (mempty
-         { wpmWarnings = warnings
-         })
+    DescriptiveParser (tell
+                          (mempty
+                           { wpmWarnings = warnings
+                           }))
     return result
 
 -- | Handle warnings in a @Traversable@ of sub-objects.
 jsonSubWarningsT
     :: Traversable t
-    => WarningParser (t (a, [JSONWarning])) -> WarningParser (t a)
+    => DescriptiveParser (t (a, [JSONWarning])) -> DescriptiveParser (t a)
 jsonSubWarningsT f =
     Traversable.mapM (jsonSubWarnings . return) =<< f
 
 -- | Handle warnings in a @Maybe Traversable@ of sub-objects.
 jsonSubWarningsTT
     :: (Traversable t, Traversable u)
-    => WarningParser (u (t (a, [JSONWarning])))
-    -> WarningParser (u (t a))
+    => DescriptiveParser (u (t (a, [JSONWarning])))
+    -> DescriptiveParser (u (t a))
 jsonSubWarningsTT f =
     Traversable.mapM (jsonSubWarningsT . return) =<< f
 
 -- | JSON parser that warns about unexpected fields in objects.
-type WarningParser a = WriterT WarningParserMonoid Parser a
+newtype DescriptiveParser a = DescriptiveParser
+    { runDescriptiveParser :: WriterT DescriptiveParserMonoid Parser a
+    } deriving (Monad,Applicative,Functor,Alternative)
 
--- | Monoid used by 'WarningParser' to track expected fields and warnings.
-data WarningParserMonoid = WarningParserMonoid
+-- | Monoid used by 'DescriptiveParser' to track expected fields and warnings.
+data DescriptiveParserMonoid = DescriptiveParserMonoid
     { wpmExpectedFields :: !(Set Text)
     , wpmWarnings :: [JSONWarning]
     }
-instance Monoid WarningParserMonoid where
-    mempty = WarningParserMonoid Set.empty []
+instance Monoid DescriptiveParserMonoid where
+    mempty = DescriptiveParserMonoid Set.empty []
     mappend a b =
-        WarningParserMonoid
+        DescriptiveParserMonoid
         { wpmExpectedFields = Set.union
               (wpmExpectedFields a)
               (wpmExpectedFields b)
         , wpmWarnings = wpmWarnings a ++ wpmWarnings b
         }
 
--- | Warning output from 'WarningParser'.
+-- | Warning output from 'DescriptiveParser'.
 data JSONWarning = JSONUnrecognizedFields String [Text]
 instance Show JSONWarning where
     show (JSONUnrecognizedFields obj [field]) =
