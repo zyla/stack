@@ -1,3 +1,4 @@
+{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE OverloadedStrings, FlexibleInstances, RecordWildCards #-}
 
 -- | Docker types.
@@ -13,6 +14,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Distribution.Text (simpleParse)
 import Distribution.Version (anyVersion)
+import Language.Haskell.ApplicativeDo
 import Path
 import Stack.Types.Version
 
@@ -100,7 +102,8 @@ data DockerOptsMonoid = DockerOptsMonoid
 -- | Decode uninterpreted docker options from JSON/YAML.
 instance FromJSON (DockerOptsMonoid, [JSONWarning]) where
   parseJSON = withObjectWarnings "DockerOptsMonoid"
-    (\o -> do dockerMonoidDefaultEnable    <- pure True
+    (\o -> $(ado [|
+           do dockerMonoidDefaultEnable    <- pure True
               dockerMonoidEnable           <- o ..:? dockerEnableArgName
               dockerMonoidRepoOrImage      <- ((Just . DockerMonoidImage) <$> o ..: dockerImageArgName) <|>
                                               ((Just . DockerMonoidRepo) <$> o ..: dockerRepoArgName) <|>
@@ -122,7 +125,7 @@ instance FromJSON (DockerOptsMonoid, [JSONWarning]) where
                                            <- unVersionRangeJSON <$>
                                                  o ..:? dockerRequireDockerVersionArgName
                                                    ..!= VersionRangeJSON anyVersion
-              return DockerOptsMonoid{..})
+              DockerOptsMonoid{..}|]))
 
 -- | Left-biased combine Docker options
 instance Monoid DockerOptsMonoid where

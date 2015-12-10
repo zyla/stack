@@ -1,3 +1,4 @@
+{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
@@ -10,6 +11,7 @@ import Control.Applicative
 import Data.Aeson.Extended
 import Data.Monoid
 import Data.Text (Text)
+import Language.Haskell.ApplicativeDo
 
 -- | Nix configuration.
 data NixOpts = NixOpts
@@ -42,12 +44,13 @@ data NixOptsMonoid = NixOptsMonoid
 -- | Decode uninterpreted nix options from JSON/YAML.
 instance FromJSON (NixOptsMonoid, [JSONWarning]) where
   parseJSON = withObjectWarnings "DockerOptsMonoid"
-    (\o -> do nixMonoidDefaultEnable <- pure True
+    (\o -> $(ado [|
+           do nixMonoidDefaultEnable <- pure True
               nixMonoidEnable <- o ..:? nixEnableArgName
               nixMonoidPackages <- o ..:? nixPackagesArgName ..!= []
               nixMonoidInitFile <- o ..:? nixInitFileArgName
               nixMonoidShellOptions <- o ..:? nixShellOptsArgName ..!= []
-              return NixOptsMonoid{..})
+              NixOptsMonoid{..}|]))
 
 -- | Left-biased combine nix options
 instance Monoid NixOptsMonoid where

@@ -1,3 +1,4 @@
+{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
@@ -6,9 +7,10 @@ module Stack.Types.Image where
 
 import Control.Applicative
 import Data.Aeson.Extended
-import Data.Monoid
 import Data.Map (Map)
+import Data.Monoid
 import Data.Text (Text)
+import Language.Haskell.ApplicativeDo
 import Prelude -- Fix redundant import warnings
 
 -- | Image options. Currently only Docker image options.
@@ -46,11 +48,9 @@ instance FromJSON (ImageOptsMonoid, [JSONWarning]) where
     parseJSON = withObjectWarnings
             "ImageOptsMonoid"
             (\o ->
+                  $(ado [|
                   do imgMonoidDocker <- jsonSubWarningsT (o ..:? imgDockerArgName)
-                     return
-                         ImageOptsMonoid
-                         { ..
-                         })
+                     ImageOptsMonoid {..}|]))
 
 instance Monoid ImageOptsMonoid where
     mempty = ImageOptsMonoid
@@ -63,16 +63,13 @@ instance Monoid ImageOptsMonoid where
 instance FromJSON (ImageDockerOptsMonoid, [JSONWarning]) where
     parseJSON = withObjectWarnings
             "ImageDockerOptsMonoid"
-            (\o ->
+            (\o -> $(ado [|
                   do imgDockerMonoidBase <- o ..:? imgDockerBaseArgName
                      imgDockerMonoidEntrypoints <- o ..:?
                                                    imgDockerEntrypointsArgName
                      imgDockerMonoidAdd <- o ..:? imgDockerAddArgName
                      imgDockerMonoidImageName <- o ..:? imgDockerImageNameArgName
-                     return
-                         ImageDockerOptsMonoid
-                         { ..
-                         })
+                     ImageDockerOptsMonoid {..}|]))
 
 instance Monoid ImageDockerOptsMonoid where
     mempty = ImageDockerOptsMonoid

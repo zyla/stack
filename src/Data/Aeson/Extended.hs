@@ -1,3 +1,4 @@
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings, RecordWildCards, TemplateHaskell, TupleSections #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
@@ -17,6 +18,9 @@ module Data.Aeson.Extended (
   , logJSONWarnings
   , tellJSONField
   , unDescriptiveParser
+  , jsonValidate
+  , chainMaybe
+  , Chain(..)
   , (..:)
   , (..:?)
   , (..!=)
@@ -53,13 +57,13 @@ import Prelude -- Fix redundant import warnings
 (..:)
     :: FromJSON a
     => Object -> Text -> DescriptiveParser a
-o ..: k = tellJSONField k >> DescriptiveParser (lift (o .: k))
+o ..: k = tellJSONField k *> DescriptiveParser (lift (o .: k))
 
 -- | 'DescriptiveParser' version of @.:?@.
 (..:?)
     :: FromJSON a
     => Object -> Text -> DescriptiveParser (Maybe a)
-o ..:? k = tellJSONField k >> DescriptiveParser (lift (o .:? k))
+o ..:? k = tellJSONField k *> DescriptiveParser (lift (o .:? k))
 
 -- | 'DescriptiveParser' version of @.!=@.
 (..!=) :: DescriptiveParser (Maybe a) -> a -> DescriptiveParser a
@@ -109,20 +113,25 @@ logJSONWarnings fp =
 
 -- | Handle warnings in a sub-object.
 jsonSubWarnings :: DescriptiveParser (a, [JSONWarning]) -> DescriptiveParser a
-jsonSubWarnings f = do
-    (result,warnings) <- f
-    DescriptiveParser (tell
-                          (mempty
-                           { wpmWarnings = warnings
-                           }))
-    return result
+jsonSubWarnings f =
+    DescriptiveParser
+        (do (result,warnings) <- runDescriptiveParser f
+            tell
+                (mempty
+                 { wpmWarnings = warnings
+                 })
+            return result)
 
 -- | Handle warnings in a @Traversable@ of sub-objects.
 jsonSubWarningsT
     :: Traversable t
     => DescriptiveParser (t (a, [JSONWarning])) -> DescriptiveParser (t a)
 jsonSubWarningsT f =
-    Traversable.mapM (jsonSubWarnings . return) =<< f
+    DescriptiveParser
+        (Traversable.mapM
+             (runDescriptiveParser .
+              jsonSubWarnings . DescriptiveParser . return) =<<
+         runDescriptiveParser f)
 
 -- | Handle warnings in a @Maybe Traversable@ of sub-objects.
 jsonSubWarningsTT
@@ -130,12 +139,16 @@ jsonSubWarningsTT
     => DescriptiveParser (u (t (a, [JSONWarning])))
     -> DescriptiveParser (u (t a))
 jsonSubWarningsTT f =
-    Traversable.mapM (jsonSubWarningsT . return) =<< f
+    DescriptiveParser
+        (Traversable.mapM
+             (runDescriptiveParser .
+              jsonSubWarningsT . DescriptiveParser . return) =<<
+         runDescriptiveParser f)
 
 -- | JSON parser that warns about unexpected fields in objects.
 newtype DescriptiveParser a = DescriptiveParser
     { runDescriptiveParser :: WriterT DescriptiveParserMonoid Parser a
-    } deriving (Monad,Applicative,Functor,Alternative)
+    } deriving (Applicative,Functor,Alternative)
 
 -- | Monoid used by 'DescriptiveParser' to track expected fields and warnings.
 data DescriptiveParserMonoid = DescriptiveParserMonoid
@@ -159,3 +172,34 @@ instance Show JSONWarning where
         "Unrecognized field in " <> obj <> ": " <> T.unpack field
     show (JSONUnrecognizedFields obj fields) =
         "Unrecognized fields in " <> obj <> ": " <> T.unpack (T.intercalate ", " fields)
+
+-- | Run a validation and fail if the Either returns Left. This
+-- allows us to have some dependency without monads.
+jsonValidate :: DescriptiveParser a
+             -> (a -> Either String b)
+             -> DescriptiveParser b
+jsonValidate p f =
+    DescriptiveParser
+        (do v <- runDescriptiveParser p
+            case f v of
+                Left e -> fail e
+                Right k -> return k)
+
+-- | An index into an object.
+data Chain
+    = Link !Text
+    | Chain !Text
+            !Chain
+
+-- | Chain the list of parsers. This allows us to have some dependency
+-- without monads.
+chainMaybe :: FromJSON a => Object -> Chain -> DescriptiveParser (Maybe a)
+chainMaybe o =
+    \case
+        (Link k) -> o ..:? k
+        (Chain k c) ->
+            DescriptiveParser
+                (do r <- runDescriptiveParser (o ..:? k)
+                    case r of
+                        Nothing -> return Nothing
+                        Just o' -> runDescriptiveParser (chainMaybe o' c))

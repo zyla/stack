@@ -124,13 +124,13 @@ module Stack.Types.Config
 import           Control.Applicative
 import           Control.Arrow ((&&&))
 import           Control.Exception
-import           Control.Monad (liftM, mzero, forM)
+import           Control.Monad (liftM, mzero)
 import           Control.Monad.Catch (MonadThrow, throwM)
 import           Control.Monad.Logger (LogLevel(..))
 import           Control.Monad.Reader (MonadReader, ask, asks, MonadIO, liftIO)
 import           Data.Aeson.Extended
-                 (ToJSON, toJSON, FromJSON, parseJSON, withText, object,
-                  (.=), (..:), (..:?), (..!=), Value(String, Object),
+                 (ToJSON, toJSON, FromJSON, parseJSON, withText, object, jsonValidate,
+                  (.=), (..:), (..:?), (..!=), Value(String, Object),Chain (..), chainMaybe,
                   withObjectWarnings, DescriptiveParser, Object, jsonSubWarnings, JSONWarning,
                   jsonSubWarningsT, jsonSubWarningsTT)
 import           Data.Attoparsec.Args
@@ -155,6 +155,7 @@ import           Data.Yaml (ParseException)
 import           Distribution.System (Platform)
 import qualified Distribution.Text
 import           Distribution.Version (anyVersion)
+import           Language.Haskell.ApplicativeDo
 import           Network.HTTP.Client (parseUrl)
 import           Path
 import qualified Paths_stack as Meta
@@ -303,28 +304,31 @@ data PackageIndex = PackageIndex
     }
     deriving Show
 instance FromJSON (PackageIndex, [JSONWarning]) where
-    parseJSON = withObjectWarnings "PackageIndex" $ \o -> do
-        name <- o ..: "name"
-        prefix <- o ..: "download-prefix"
-        mgit <- o ..:? "git"
-        mhttp <- o ..:? "http"
-        loc <-
-            case (mgit, mhttp) of
-                (Nothing, Nothing) -> fail $
-                    "Must provide either Git or HTTP URL for " ++
-                    T.unpack (indexNameText name)
-                (Just git, Nothing) -> return $ ILGit git
-                (Nothing, Just http) -> return $ ILHttp http
-                (Just git, Just http) -> return $ ILGitHttp git http
+    parseJSON = withObjectWarnings "PackageIndex" $ \o -> $(ado [|do
+        (name,prefix,loc) <-
+            jsonValidate
+                ((,,,) <$> o ..: "name"
+                       <*> o ..: "download-prefix"
+                       <*> o ..:? "git"
+                       <*> o ..:? "http")
+                (\(name,prefix,mgit,mhttp) ->
+                     fmap (\x -> (name,prefix,x))
+                          (case (mgit, mhttp) of
+                               (Nothing, Nothing) -> Left $
+                                   "Must provide either Git or HTTP URL for " ++
+                                   T.unpack (indexNameText name)
+                               (Just git, Nothing) -> Right (ILGit git)
+                               (Nothing, Just http) -> Right (ILHttp http)
+                               (Just git, Just http) -> Right (ILGitHttp git http)))
         gpgVerify <- o ..:? "gpg-verify" ..!= False
         reqHashes <- o ..:? "require-hashes" ..!= False
-        return PackageIndex
+        PackageIndex
             { indexName = name
             , indexLocation = loc
             , indexDownloadPrefix = prefix
             , indexGpgVerify = gpgVerify
             , indexRequireHashes = reqHashes
-            }
+            }|])
 
 -- | Unique name for a package index
 newtype IndexName = IndexName { unIndexName :: ByteString }
@@ -876,7 +880,7 @@ instance FromJSON (ConfigMonoid, [JSONWarning]) where
 -- file and a project file, so that a sub-parser is not required, which would interfere with
 -- warnings for missing fields.
 parseConfigMonoidJSON :: Object -> DescriptiveParser ConfigMonoid
-parseConfigMonoidJSON obj = do
+parseConfigMonoidJSON obj = $(ado [|do
     configMonoidWorkDir <- obj ..:? configMonoidWorkDirName
     configMonoidDockerOpts <- jsonSubWarnings (obj ..:? configMonoidDockerOptsName ..!= mempty)
     configMonoidNixOpts <- jsonSubWarnings (obj ..:? configMonoidNixOptsName ..!= mempty)
@@ -900,38 +904,40 @@ parseConfigMonoidJSON obj = do
     configMonoidConcurrentTests <- obj ..:? configMonoidConcurrentTestsName
     configMonoidLocalBinPath <- obj ..:? configMonoidLocalBinPathName
     configMonoidImageOpts <- jsonSubWarnings (obj ..:?  configMonoidImageOptsName ..!= mempty)
-    templates <- obj ..:? "templates"
-    (configMonoidScmInit,configMonoidTemplateParameters) <-
-      case templates of
-        Nothing -> return (Nothing,M.empty)
-        Just tobj -> do
-          scmInit <- tobj ..:? configMonoidScmInitName
-          params <- tobj ..:? configMonoidTemplateParametersName
-          return (scmInit,fromMaybe M.empty params)
+    templates <- chainMaybe obj (Link "templates") :: DescriptiveParser (Maybe Object)
+    params <- chainMaybe obj (Chain "templates" (Link configMonoidTemplateParametersName))
+    scmInit <- chainMaybe obj (Chain "templates" (Link configMonoidScmInitName))
     configMonoidCompilerCheck <- obj ..:? configMonoidCompilerCheckName
 
-    mghcoptions <- obj ..:? configMonoidGhcOptionsName
     configMonoidGhcOptions <-
-        case mghcoptions of
-            Nothing -> return mempty
-            Just m -> fmap Map.fromList $ mapM handleGhcOptions $ Map.toList m
-
-    extraPath <- obj ..:? configMonoidExtraPathName ..!= []
-    configMonoidExtraPath <- forM extraPath $
-        either (fail . show) return . parseAbsDir . T.unpack
+        jsonValidate
+            (obj ..:? configMonoidGhcOptionsName)
+            (\mopts ->
+                 case mopts of
+                   Nothing -> pure mempty
+                   Just m ->
+                       fmap Map.fromList (mapM handleGhcOptions (Map.toList m)))
+    configMonoidExtraPath <-
+        jsonValidate
+            (obj ..:? configMonoidExtraPathName ..!= [])
+            (mapM (either (fail . show) return . parseAbsDir . T.unpack))
 
     configMonoidSetupInfoLocations <-
         maybeToList <$> jsonSubWarningsT (obj ..:?  configMonoidSetupInfoLocationsName)
     configMonoidPvpBounds <- obj ..:? configMonoidPvpBoundsName
     configMonoidModifyCodePage <- obj ..:? configMonoidModifyCodePageName
     configMonoidExplicitSetupDeps <-
-        (obj ..:? configMonoidExplicitSetupDepsName ..!= mempty)
-        >>= fmap Map.fromList . mapM handleExplicitSetupDep . Map.toList
+        jsonValidate (obj ..:? configMonoidExplicitSetupDepsName ..!= mempty)
+                     (fmap Map.fromList . mapM handleExplicitSetupDep . Map.toList)
     configMonoidRebuildGhcOptions <- obj ..:? configMonoidRebuildGhcOptionsName
     configMonoidApplyGhcOptions <- obj ..:? configMonoidApplyGhcOptionsName
     configMonoidAllowNewer <- obj ..:? configMonoidAllowNewerName
 
-    return ConfigMonoid {..}
+    let (configMonoidScmInit,configMonoidTemplateParameters) =
+          case templates of
+            Nothing -> (Nothing,M.empty)
+            Just{} -> (scmInit,fromMaybe M.empty params)
+        in ConfigMonoid {..}|])
   where
     handleGhcOptions :: Monad m => (Text, Text) -> m (Maybe PackageName, [Text])
     handleGhcOptions (name', vals') = do
@@ -1333,14 +1339,15 @@ data ProjectAndConfigMonoid
   = ProjectAndConfigMonoid !Project !ConfigMonoid
 
 instance (warnings ~ [JSONWarning]) => FromJSON (ProjectAndConfigMonoid, warnings) where
-    parseJSON = withObjectWarnings "ProjectAndConfigMonoid" $ \o -> do
+    parseJSON = withObjectWarnings "ProjectAndConfigMonoid" $ \o -> $(ado [|do
         dirs <- jsonSubWarningsTT (o ..:? "packages") ..!= [packageEntryCurrDir]
-        extraDeps' <- o ..:? "extra-deps" ..!= []
         extraDeps <-
-            case partitionEithers $ goDeps extraDeps' of
-                ([], x) -> return $ Map.fromList x
-                (errs, _) -> fail $ unlines errs
-
+            jsonValidate
+                (o ..:? "extra-deps" ..!= [])
+                (\extraDeps' ->
+                     case partitionEithers $ goDeps extraDeps' of
+                         ([], x) -> return $ Map.fromList x
+                         (errs, _) -> fail $ unlines errs)
         flags <- o ..:? "flags" ..!= mempty
         resolver <- jsonSubWarnings (o ..: "resolver")
         compiler <- o ..:? "compiler"
@@ -1354,7 +1361,7 @@ instance (warnings ~ [JSONWarning]) => FromJSON (ProjectAndConfigMonoid, warning
                 , projectCompiler = compiler
                 , projectExtraPackageDBs = extraPackageDBs
                 }
-        return $ ProjectAndConfigMonoid project config
+            in ProjectAndConfigMonoid project config|])
       where
         goDeps =
             map toSingle . Map.toList . Map.unionsWith Set.union . map toMap
@@ -1459,16 +1466,15 @@ instance FromJSON (DownloadInfo, [JSONWarning]) where
 
 -- | Parse JSON in existing object for 'DownloadInfo'
 parseDownloadInfoFromObject :: Object -> DescriptiveParser DownloadInfo
-parseDownloadInfoFromObject o = do
+parseDownloadInfoFromObject o = $(ado [|do
     url <- o ..: "url"
     contentLength <- o ..:? "content-length"
     sha1TextMay <- o ..:? "sha1"
-    return
-        DownloadInfo
+    DownloadInfo
         { downloadInfoUrl = url
         , downloadInfoContentLength = contentLength
         , downloadInfoSha1 = fmap encodeUtf8 sha1TextMay
-        }
+        }|])
 
 data VersionedDownloadInfo = VersionedDownloadInfo
     { vdiVersion :: Version
@@ -1477,13 +1483,13 @@ data VersionedDownloadInfo = VersionedDownloadInfo
     deriving Show
 
 instance FromJSON (VersionedDownloadInfo, [JSONWarning]) where
-    parseJSON = withObjectWarnings "VersionedDownloadInfo" $ \o -> do
+    parseJSON = withObjectWarnings "VersionedDownloadInfo" $ \o -> $(ado [|do
         version <- o ..: "version"
         downloadInfo <- parseDownloadInfoFromObject o
-        return VersionedDownloadInfo
+        VersionedDownloadInfo
             { vdiVersion = version
             , vdiDownloadInfo = downloadInfo
-            }
+            }|])
 
 data SetupInfo = SetupInfo
     { siSevenzExe :: Maybe DownloadInfo
@@ -1496,14 +1502,14 @@ data SetupInfo = SetupInfo
     deriving Show
 
 instance FromJSON (SetupInfo, [JSONWarning]) where
-    parseJSON = withObjectWarnings "SetupInfo" $ \o -> do
+    parseJSON = withObjectWarnings "SetupInfo" $ \o -> $(ado [|do
         siSevenzExe <- jsonSubWarningsT (o ..:? "sevenzexe-info")
         siSevenzDll <- jsonSubWarningsT (o ..:? "sevenzdll-info")
         siMsys2 <- jsonSubWarningsT (o ..:? "msys2" ..!= mempty)
         siGHCs <- jsonSubWarningsTT (o ..:? "ghc" ..!= mempty)
         siGHCJSs <- jsonSubWarningsTT (o ..:? "ghcjs" ..!= mempty)
         siStack <- jsonSubWarningsTT (o ..:? "stack" ..!= mempty)
-        return SetupInfo {..}
+        SetupInfo {..}|])
 
 -- | For @siGHCs@ and @siGHCJSs@ fields maps are deeply merged.
 -- For all fields the values from the last @SetupInfo@ win.
