@@ -1,3 +1,5 @@
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings, RecordWildCards, TemplateHaskell, TupleSections #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
@@ -18,6 +20,7 @@ module Data.Aeson.Extended (
   , logJSONWarnings
   , tellJSONField
   , unDescriptiveParser
+  , describeDescriptiveParser
   , jsonValidate
   , chainMaybe
   , Chain(..)
@@ -34,6 +37,7 @@ import Data.Aeson as Export hiding ((.:), (.:?))
 import qualified Data.Aeson as A
 import Data.Aeson.Types hiding ((.:), (.:?))
 import qualified Data.HashMap.Strict as HashMap
+import Data.Typeable
 import Data.Monoid
 import Data.Set (Set)
 import qualified Data.Set as Set
@@ -55,27 +59,48 @@ import Prelude -- Fix redundant import warnings
 
 -- | 'DescriptiveParser' version of @.:@.
 (..:)
-    :: FromJSON a
+    :: forall a. (Typeable a,FromJSON a)
     => Object -> Text -> DescriptiveParser a
-o ..: k = tellJSONField k *> DescriptiveParser (lift (o .: k))
+o ..: k =
+    tellJSONField k *>
+    DescriptiveParser
+    { runDescriptiveParser = lift (o .: k)
+    , describeDescriptiveParser = DescField (Link k) (typeOf (undefined :: a))
+    }
 
 -- | 'DescriptiveParser' version of @.:?@.
 (..:?)
-    :: FromJSON a
+    :: forall a. (FromJSON a,Typeable a)
     => Object -> Text -> DescriptiveParser (Maybe a)
-o ..:? k = tellJSONField k *> DescriptiveParser (lift (o .:? k))
+o ..:? k =
+    tellJSONField k *>
+    DescriptiveParser
+    { runDescriptiveParser = (lift (o .:? k))
+    , describeDescriptiveParser = DescOptionalField k (typeOf (undefined :: a))
+    }
 
 -- | 'DescriptiveParser' version of @.!=@.
-(..!=) :: DescriptiveParser (Maybe a) -> a -> DescriptiveParser a
+(..!=) :: Show a => DescriptiveParser (Maybe a) -> a -> DescriptiveParser a
 wp ..!= d =
-    DescriptiveParser(flip mapWriterT (runDescriptiveParser wp) $
-                      \p ->
-                           do a <- fmap snd p
-                              fmap (, a) (fmap fst p .!= d))
+    DescriptiveParser
+    { runDescriptiveParser = flip mapWriterT (runDescriptiveParser wp) $
+      \p ->
+           do a <- fmap snd p
+              fmap (, a) (fmap fst p .!= d)
+    , describeDescriptiveParser = DescNotEqual
+          (describeDescriptiveParser wp)
+    }
 
 -- | Tell warning parser about an expected field, so it doesn't warn about it.
 tellJSONField :: Text -> DescriptiveParser ()
-tellJSONField key = DescriptiveParser(tell (mempty { wpmExpectedFields = Set.singleton key}))
+tellJSONField key =
+    DescriptiveParser
+    { runDescriptiveParser = tell
+          (mempty
+           { wpmExpectedFields = Set.singleton key
+           })
+    , describeDescriptiveParser = descEmpty
+    }
 
 -- | 'DescriptiveParser' version of 'withObject'.
 withObjectWarnings :: String
@@ -115,12 +140,14 @@ logJSONWarnings fp =
 jsonSubWarnings :: DescriptiveParser (a, [JSONWarning]) -> DescriptiveParser a
 jsonSubWarnings f =
     DescriptiveParser
-        (do (result,warnings) <- runDescriptiveParser f
-            tell
-                (mempty
-                 { wpmWarnings = warnings
-                 })
-            return result)
+    { runDescriptiveParser = do (result,warnings) <- runDescriptiveParser f
+                                tell
+                                    (mempty
+                                     { wpmWarnings = warnings
+                                     })
+                                return result
+    , describeDescriptiveParser = describeDescriptiveParser f
+    }
 
 -- | Handle warnings in a @Traversable@ of sub-objects.
 jsonSubWarningsT
@@ -128,10 +155,18 @@ jsonSubWarningsT
     => DescriptiveParser (t (a, [JSONWarning])) -> DescriptiveParser (t a)
 jsonSubWarningsT f =
     DescriptiveParser
-        (Traversable.mapM
-             (runDescriptiveParser .
-              jsonSubWarnings . DescriptiveParser . return) =<<
-         runDescriptiveParser f)
+    { runDescriptiveParser = (Traversable.mapM
+                                  (runDescriptiveParser .
+                                   jsonSubWarnings . mkRunDesc . return) =<<
+                              runDescriptiveParser f)
+    , describeDescriptiveParser = describeDescriptiveParser f
+    }
+  where
+    mkRunDesc m =
+        DescriptiveParser
+        { runDescriptiveParser = m
+        , describeDescriptiveParser = descEmpty
+        }
 
 -- | Handle warnings in a @Maybe Traversable@ of sub-objects.
 jsonSubWarningsTT
@@ -140,15 +175,85 @@ jsonSubWarningsTT
     -> DescriptiveParser (u (t a))
 jsonSubWarningsTT f =
     DescriptiveParser
-        (Traversable.mapM
-             (runDescriptiveParser .
-              jsonSubWarningsT . DescriptiveParser . return) =<<
-         runDescriptiveParser f)
+    { runDescriptiveParser = Traversable.mapM
+          (runDescriptiveParser . jsonSubWarningsT . mkRunDesc . return) =<<
+      runDescriptiveParser f
+    , describeDescriptiveParser = describeDescriptiveParser f
+    }
+  where
+    mkRunDesc m =
+        DescriptiveParser
+        { runDescriptiveParser = m
+        , describeDescriptiveParser = descEmpty
+        }
 
--- | JSON parser that warns about unexpected fields in objects.
-newtype DescriptiveParser a = DescriptiveParser
+-- | A self-describing JSON parser that warns about unexpected fields
+-- in objects.
+data DescriptiveParser a = DescriptiveParser
     { runDescriptiveParser :: WriterT DescriptiveParserMonoid Parser a
-    } deriving (Applicative,Functor,Alternative)
+    , describeDescriptiveParser :: Desc
+    } deriving (Functor)
+
+instance Applicative DescriptiveParser where
+    pure x =
+        DescriptiveParser
+        { runDescriptiveParser = pure x
+        , describeDescriptiveParser = descEmpty
+        }
+    f <*> a =
+        DescriptiveParser
+        { runDescriptiveParser = runDescriptiveParser f <*>
+          runDescriptiveParser a
+        , describeDescriptiveParser = descAnd (describeDescriptiveParser f)
+          (describeDescriptiveParser a)
+        }
+
+instance Alternative DescriptiveParser where
+    empty =
+        DescriptiveParser
+        { runDescriptiveParser = empty
+        , describeDescriptiveParser = descEmpty
+        }
+    x <|> y =
+        DescriptiveParser
+        { runDescriptiveParser = runDescriptiveParser x <|>
+          runDescriptiveParser y
+        , describeDescriptiveParser = descOr
+              (describeDescriptiveParser x)
+              (describeDescriptiveParser y)
+        }
+
+-- | Description of a JSON parser.
+data Desc
+    = DescEmpty
+    | DescAnd ![Desc]
+    | DescOr ![Desc]
+    | DescField !Chain !TypeRep
+    | DescOptionalField !Text !TypeRep
+    | DescNotEqual !Desc
+    deriving (Show)
+
+-- | Monoidal empty, for either AND or OR.
+descEmpty :: Desc
+descEmpty = DescEmpty
+
+-- | Mappend for concatenation.
+descAnd :: Desc -> Desc -> Desc
+descAnd DescEmpty x = x
+descAnd x DescEmpty = x
+descAnd (DescAnd x) (DescAnd y) = DescAnd (x ++ y)
+descAnd (DescAnd x) y = DescAnd (x ++ [y])
+descAnd x (DescAnd y) = DescAnd ([x] ++ y)
+descAnd x y = DescAnd [x,y]
+
+-- | Mappend for disjunction.
+descOr :: Desc -> Desc -> Desc
+descOr DescEmpty x = x
+descOr x DescEmpty = x
+descOr (DescOr x) (DescOr y) = DescOr (x ++ y)
+descOr (DescOr x) y = DescOr (x ++ [y])
+descOr x (DescOr y) = DescOr ([x] ++ y)
+descOr x y = DescOr [x,y]
 
 -- | Monoid used by 'DescriptiveParser' to track expected fields and warnings.
 data DescriptiveParserMonoid = DescriptiveParserMonoid
@@ -175,31 +280,40 @@ instance Show JSONWarning where
 
 -- | Run a validation and fail if the Either returns Left. This
 -- allows us to have some dependency without monads.
-jsonValidate :: DescriptiveParser a
-             -> (a -> Either String b)
+jsonValidate :: DescriptiveParser a -- ^ Parser from which value to work on.
+             -> (a -> Either String b) -- ^ Validating function.
              -> DescriptiveParser b
 jsonValidate p f =
     DescriptiveParser
-        (do v <- runDescriptiveParser p
-            case f v of
-                Left e -> fail e
-                Right k -> return k)
+    { runDescriptiveParser = do v <- runDescriptiveParser p
+                                case f v of
+                                    Left e -> fail e
+                                    Right k -> return k
+    , describeDescriptiveParser = describeDescriptiveParser p
+    }
 
 -- | An index into an object.
 data Chain
     = Link !Text
     | Chain !Text
             !Chain
+  deriving (Show)
 
 -- | Chain the list of parsers. This allows us to have some dependency
 -- without monads.
-chainMaybe :: FromJSON a => Object -> Chain -> DescriptiveParser (Maybe a)
-chainMaybe o =
-    \case
+chainMaybe
+    :: forall a. (FromJSON a, Typeable a)
+    => Object -> Chain -> DescriptiveParser (Maybe a)
+chainMaybe o chain =
+    case chain of
         (Link k) -> o ..:? k
         (Chain k c) ->
             DescriptiveParser
-                (do r <- runDescriptiveParser (o ..:? k)
-                    case r of
-                        Nothing -> return Nothing
-                        Just o' -> runDescriptiveParser (chainMaybe o' c))
+            { runDescriptiveParser = do r <- runDescriptiveParser (o ..:? k)
+                                        case r of
+                                            Nothing -> return Nothing
+                                            Just o' ->
+                                                runDescriptiveParser
+                                                    (chainMaybe o' c)
+            , describeDescriptiveParser = DescField chain (typeOf (undefined :: a))
+            }

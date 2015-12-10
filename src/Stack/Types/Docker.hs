@@ -215,6 +215,7 @@ data DockerMonoidRepoOrImage
 
 -- | Newtype for non-orphan FromJSON instance.
 newtype VersionRangeJSON = VersionRangeJSON { unVersionRangeJSON :: VersionRange }
+  deriving Show
 
 -- | Parse VersionRange.
 instance FromJSON VersionRangeJSON where
