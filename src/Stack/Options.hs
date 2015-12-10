@@ -44,6 +44,7 @@ import           Options.Applicative.Builder.Extra
 import           Options.Applicative.Types (fromM, oneM, readerAsk)
 import           Stack.Clean (CleanOpts(..))
 import           Stack.Config (packagesParser)
+import           Stack.Types.Config (describeConfig)
 import           Stack.ConfigCmd
 import           Stack.Constants (stackProgName)
 import           Stack.Coverage (HpcReportOpts(..))
@@ -568,7 +569,13 @@ execOptsExtraParser = eoPlainParser <|>
 globalOptsParser :: Bool -> Maybe LogLevel -> Parser GlobalOptsMonoid
 globalOptsParser hide0 defLogLevel =
     GlobalOptsMonoid <$>
-    optional (strOption (long Docker.reExecArgName <> hidden <> internal)) <*>
+    (optional (abortOption
+                   (InfoMsg
+                        ("The following YAML settings are supported: \n\n" <>
+                         T.unpack describeConfig)) $
+               long "config-help" <>
+               help "Show all available configuration (.yaml file) options") *>
+    optional (strOption (long Docker.reExecArgName <> hidden <> internal))) <*>
     optional (option auto (long dockerEntrypointArgName <> hidden <> internal)) <*>
     logLevelOptsParser hide0 defLogLevel <*>
     configOptsParser hide0 <*>

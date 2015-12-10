@@ -10,6 +10,7 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# OPTIONS_GHC -fno-warn-orphans #-}
 
 -- | The Config type.
 
@@ -119,6 +120,8 @@ module Stack.Types.Config
   ,SetupInfoLocation(..)
   -- ** Docker entrypoint
   ,DockerEntrypoint(..)
+  -- ** Documentation
+  ,describeConfig
   ) where
 
 import           Control.Applicative
@@ -132,7 +135,7 @@ import           Data.Aeson.Extended
                  (ToJSON, toJSON, FromJSON, parseJSON, withText, object, jsonValidate,
                   (.=), (..:), (..:?), (..!=), Value(String, Object),Chain (..), chainMaybe,
                   withObjectWarnings, DescriptiveParser, Object, jsonSubWarnings, JSONWarning,
-                  jsonSubWarningsT, jsonSubWarningsTT)
+                  jsonSubWarningsT, jsonSubWarningsTT, Describe(..), prettyDesc, describeDescriptiveParser)
 import           Data.Attoparsec.Args
 import           Data.Binary (Binary)
 import           Data.ByteString (ByteString)
@@ -276,6 +279,10 @@ data Config =
          -- match cabal.
          }
 
+-- | Description of the config parser.
+describeConfig :: Text
+describeConfig = prettyDesc (describeDescriptiveParser (parseConfigMonoidJSON mempty))
+
 -- | Which packages to ghc-options on the command line apply to?
 data ApplyGhcOptions = AGOTargets -- ^ all local targets
                      | AGOLocals -- ^ all local packages, even non-targets
@@ -329,6 +336,8 @@ instance FromJSON (PackageIndex, [JSONWarning]) where
             , indexGpgVerify = gpgVerify
             , indexRequireHashes = reqHashes
             }|])
+
+instance Describe IndexName where describe _ = "package index name"
 
 -- | Unique name for a package index
 newtype IndexName = IndexName { unIndexName :: ByteString }
@@ -561,6 +570,8 @@ instance FromJSON (PackageEntry, [JSONWarning]) where
         <*> o ..:? "valid-wanted"
         <*> jsonSubWarnings (o ..: "location")
         <*> o ..:? "subdirs" ..!= []) v
+
+instance Describe PackageLocation where describe _ = "package location"
 
 data PackageLocation
     = PLFilePath FilePath
@@ -961,6 +972,8 @@ parseConfigMonoidJSON obj = $(ado [|do
                         Left e -> fail $ show e
                         Right x -> return $ Just x
         return (name, b)
+
+instance Describe a => Describe (a,[JSONWarning]) where describe _ = describe (Proxy :: Proxy a)
 
 configMonoidWorkDirName :: Text
 configMonoidWorkDirName = "work-dir"
@@ -1594,3 +1607,20 @@ data DockerEntrypoint = DockerEntrypoint
     { deUidGid :: !(Maybe (UserID, GroupID))
       -- ^ UID/GID of host user, if we wish to perform UID/GID switch in container
     } deriving (Read,Show)
+
+instance Describe VersionCheck where describe _ = "version check"
+instance Describe PvpBounds where describe _ = "PVP bounds"
+instance Describe PackageIndex where describe _ = "package index"
+instance Describe SetupInfoLocation where describe _ = "setup info location"
+instance Describe GHCVariant where describe _ = "GHC variant"
+instance Describe ApplyGhcOptions where describe _ = "GHC options"
+instance Describe CompilerVersion where describe _ = "compiler version"
+instance Describe Resolver where describe _ = "resolver"
+instance Describe PackageEntry where describe _ = "package entry"
+instance Describe SCM where describe _ = "SCM"
+instance Describe Version where describe _ = "version"
+instance Describe DownloadInfo where describe _ = "download info"
+instance Describe PackageIdentifier where describe _ = "package identifier"
+instance Describe DockerOptsMonoid where describe _ = "docker options"
+instance Describe ImageOptsMonoid where describe _ = "image options"
+instance Describe NixOptsMonoid where describe _ = "nix options"

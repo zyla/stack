@@ -44,6 +44,7 @@ data ImageDockerOptsMonoid = ImageDockerOptsMonoid
     , imgDockerMonoidImageName :: !(Maybe String)
     } deriving (Show)
 
+instance Describe (ImageDockerOptsMonoid,a) where describe _ = "docker options"
 instance FromJSON (ImageOptsMonoid, [JSONWarning]) where
     parseJSON = withObjectWarnings
             "ImageOptsMonoid"

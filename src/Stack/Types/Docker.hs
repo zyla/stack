@@ -213,6 +213,9 @@ data DockerMonoidRepoOrImage
   | DockerMonoidImage String
   deriving (Show)
 
+instance Describe VersionRangeJSON where describe _ = "version range"
+instance Describe Mount where describe _ = "mount volume"
+
 -- | Newtype for non-orphan FromJSON instance.
 newtype VersionRangeJSON = VersionRangeJSON { unVersionRangeJSON :: VersionRange }
   deriving Show

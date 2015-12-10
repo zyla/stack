@@ -1,3 +1,5 @@
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE TypeSynonymInstances #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE LambdaCase #-}
@@ -12,8 +14,10 @@ module Data.Aeson.Extended (
   , (.:?)
   -- * JSON Parser that emits warnings
   , DescriptiveParser
+  , Describe(..)
   , JSONWarning (..)
   , withObjectWarnings
+  , prettyDesc
   , jsonSubWarnings
   , jsonSubWarningsT
   , jsonSubWarningsTT
@@ -29,23 +33,24 @@ module Data.Aeson.Extended (
   , (..!=)
   ) where
 
-import Control.Applicative
-import Control.Monad.Logger (MonadLogger, logWarn)
-import Control.Monad.Trans (lift)
-import Control.Monad.Trans.Writer.Strict (WriterT, mapWriterT, runWriterT, tell)
-import Data.Aeson as Export hiding ((.:), (.:?))
+import           Control.Applicative
+import           Control.Monad.Logger (MonadLogger, logWarn)
+import           Control.Monad.Trans (lift)
+import           Control.Monad.Trans.Writer.Strict (WriterT, mapWriterT, runWriterT, tell)
 import qualified Data.Aeson as A
-import Data.Aeson.Types hiding ((.:), (.:?))
+import           Data.Aeson as Export hiding ((.:), (.:?))
+import           Data.Aeson.Types hiding ((.:), (.:?))
 import qualified Data.HashMap.Strict as HashMap
-import Data.Typeable
-import Data.Monoid
-import Data.Set (Set)
+import           Data.Map.Strict (Map)
+import           Data.Monoid
+import           Data.Proxy
+import           Data.Set (Set)
 import qualified Data.Set as Set
-import Data.Text (unpack, Text)
+import           Data.Text (unpack, Text)
 import qualified Data.Text as T
-import Data.Traversable
+import           Data.Traversable
 import qualified Data.Traversable as Traversable
-import Prelude -- Fix redundant import warnings
+import           Prelude -- Fix redundant import warnings
 
 -- | Extends @.:@ warning to include field name.
 (.:) :: FromJSON a => Object -> Text -> Parser a
@@ -57,26 +62,42 @@ import Prelude -- Fix redundant import warnings
 (.:?) o p = modifyFailure (("failed to parse field '" <> unpack p <> "': ") <>) (o A..:? p)
 {-# INLINE (.:?) #-}
 
+class Describe a  where
+    describe :: Proxy a -> Text
+
+instance Describe Object where describe _ = "object"
+instance Describe Bool where describe _ = "boolean"
+instance Describe Text where describe _ = "string"
+instance Describe Char where describe _ = "character"
+instance Describe Int where describe _ = "integer"
+instance Describe a => Describe [a] where
+    describe _ = case describe (Proxy :: Proxy a) of
+                   "character" -> "string"
+                   _ -> "list of " <> describe (Proxy :: Proxy a) <> "s"
+instance Describe a => Describe (Set a) where
+    describe _ = "set of " <> describe (Proxy :: Proxy a) <> "s"
+instance Describe (Map k v) where describe _ = "mapping"
+
 -- | 'DescriptiveParser' version of @.:@.
 (..:)
-    :: forall a. (Typeable a,FromJSON a)
+    :: forall a. (FromJSON a,Describe a)
     => Object -> Text -> DescriptiveParser a
 o ..: k =
     tellJSONField k *>
     DescriptiveParser
     { runDescriptiveParser = lift (o .: k)
-    , describeDescriptiveParser = DescField (Link k) (typeOf (undefined :: a))
+    , describeDescriptiveParser = DescField (Link k) (describe (Proxy :: Proxy a))
     }
 
 -- | 'DescriptiveParser' version of @.:?@.
 (..:?)
-    :: forall a. (FromJSON a,Typeable a)
+    :: forall a. (FromJSON a,Describe a)
     => Object -> Text -> DescriptiveParser (Maybe a)
 o ..:? k =
     tellJSONField k *>
     DescriptiveParser
     { runDescriptiveParser = (lift (o .:? k))
-    , describeDescriptiveParser = DescOptionalField k (typeOf (undefined :: a))
+    , describeDescriptiveParser = DescOptionalField k (describe (Proxy :: Proxy a))
     }
 
 -- | 'DescriptiveParser' version of @.!=@.
@@ -228,8 +249,8 @@ data Desc
     = DescEmpty
     | DescAnd ![Desc]
     | DescOr ![Desc]
-    | DescField !Chain !TypeRep
-    | DescOptionalField !Text !TypeRep
+    | DescField !Chain !Text
+    | DescOptionalField !Text !Text
     | DescNotEqual !Desc
     deriving (Show)
 
@@ -302,7 +323,7 @@ data Chain
 -- | Chain the list of parsers. This allows us to have some dependency
 -- without monads.
 chainMaybe
-    :: forall a. (FromJSON a, Typeable a)
+    :: forall a. (FromJSON a, Describe a)
     => Object -> Chain -> DescriptiveParser (Maybe a)
 chainMaybe o chain =
     case chain of
@@ -315,5 +336,19 @@ chainMaybe o chain =
                                             Just o' ->
                                                 runDescriptiveParser
                                                     (chainMaybe o' c)
-            , describeDescriptiveParser = DescField chain (typeOf (undefined :: a))
+            , describeDescriptiveParser = DescField chain (describe (Proxy :: Proxy a))
             }
+
+prettyDesc :: Desc -> Text
+prettyDesc = go
+  where
+    go (DescAnd xs) = T.unlines (map go xs)
+    go (DescOr xs) = "One of:\n" <> indent (T.intercalate "\nOR\n" (map go xs))
+    go DescEmpty = ""
+    go (DescField f t) = renderChain f <> ": " <> t <> "" <> " [optional]"
+    go (DescOptionalField f t) =
+        f <> ": " <> t <> " [optional]"
+    go (DescNotEqual n) = go n
+    indent = T.unlines . map ("  " <>) . T.lines
+    renderChain (Link x) = x
+    renderChain (Chain this that) = this <> "." <> renderChain that
