@@ -1,4 +1,4 @@
-resolver: lts-5.3
+resolver: nightly-2016-04-20
 image:
   containers:
     - base: "fpco/stack-base" # see ./etc/docker/stack-base/Dockerfile
