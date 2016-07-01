@@ -5,6 +5,8 @@
 {-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE ViewPatterns #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# OPTIONS -fno-warn-unused-do-bind #-}
 
 -- | Functions for the GHC package database.
@@ -14,9 +16,11 @@ module Stack.GhcPkg
   ,EnvOverride
   ,envHelper
   ,createDatabase
+  ,unregisterGhcPkgName
   ,unregisterGhcPkgId
   ,getCabalPkgVer
   ,ghcPkgExeName
+  ,ghcPkgCheck
   ,mkGhcPackagePath)
   where
 
@@ -29,9 +33,11 @@ import qualified Data.ByteString.Char8 as S8
 import           Data.Either
 import           Data.List
 import           Data.Maybe
+import           Data.Maybe.Extra (mapMaybeM)
 import           Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
+import           Data.Text.Encoding.Error (lenientDecode)
 import           Path (Path, Abs, Dir, toFilePath, parent)
 import           Path.Extra (toFilePathNoTrailingSep)
 import           Path.IO
@@ -137,16 +143,26 @@ findGhcPkgVersion menv wc pkgDbs name = do
         Just !v -> return (parseVersion v)
         _ -> return Nothing
 
+unregisterGhcPkgName :: (MonadIO m, MonadLogger m, MonadCatch m, MonadBaseControl IO m)
+                     => EnvOverride
+                     -> WhichCompiler
+                     -> [Path Abs Dir] -- ^ package databases
+                     -> PackageName
+                     -> m ()
+unregisterGhcPkgName menv wc pkgDbs pkgName =
+    either throwM ($logDebug . T.decodeUtf8With lenientDecode) =<<
+    ghcPkg menv wc pkgDbs ["unregister", "--user", "--force", packageNameString pkgName]
+
 unregisterGhcPkgId :: (MonadIO m, MonadLogger m, MonadCatch m, MonadBaseControl IO m)
                     => EnvOverride
                     -> WhichCompiler
                     -> CompilerVersion
-                    -> Path Abs Dir -- ^ package database
+                    -> [Path Abs Dir] -- ^ package databases
                     -> GhcPkgId
                     -> PackageIdentifier
                     -> m ()
-unregisterGhcPkgId menv wc cv pkgDb gid ident = do
-    eres <- ghcPkg menv wc [pkgDb] args
+unregisterGhcPkgId menv wc cv pkgDbs gid ident = do
+    eres <- ghcPkg menv wc pkgDbs args
     case eres of
         Left e -> $logWarn $ T.pack $ show e
         Right _ -> return ()
@@ -169,6 +185,28 @@ getCabalPkgVer menv wc = do
         [] -- global DB
         cabalPackageName
     maybe (throwM $ Couldn'tFindPkgId cabalPackageName) return mres
+
+ghcPkgCheck :: (MonadIO m, MonadLogger m, MonadCatch m, MonadBaseControl IO m)
+            => EnvOverride
+            -> WhichCompiler
+            -> [Path Abs Dir] -- ^ package databases
+            -> m [PackageName] -- ^ broken packages
+ghcPkgCheck menv wc pkgDbs = do
+    eres <- ghcPkg menv wc pkgDbs ["check"]
+    case eres of
+        Left err -> throwM err
+        Right bs -> mapMaybeM toBrokenPackage (S8.splitWith (`elem` ("\n\r" :: [Char])) bs)
+  where
+    toBrokenPackage ( T.stripPrefix "There are problems in package " . T.decodeUtf8
+                    -> Just (T.stripSuffix ":" -> Just name)
+                    ) = do
+        case parsePackageName name of
+            -- TODO: custom error
+            Left (fromException -> Just (err :: PackageNameParseFail)) ->
+                error ("Error parsing package name from 'ghc-pkg check' output: " ++ show err)
+            Left err -> throwM err
+            Right x -> return (Just x)
+    toBrokenPackage _ = return Nothing
 
 -- | Get the value for GHC_PACKAGE_PATH
 mkGhcPackagePath :: Bool -> Path Abs Dir -> Path Abs Dir -> [Path Abs Dir] -> Path Abs Dir -> Text

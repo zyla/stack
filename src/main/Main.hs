@@ -12,9 +12,9 @@
 
 module Main (main) where
 
-import           Control.Exception
 import qualified Control.Exception.Lifted as EL
 import           Control.Monad hiding (mapM, forM)
+import           Control.Monad.Catch
 import           Control.Monad.IO.Class
 import           Control.Monad.Logger
 import           Control.Monad.Reader (ask, asks,local,runReaderT)
@@ -39,21 +39,15 @@ import           Data.Typeable (Typeable)
 import           Data.Version (showVersion)
 import           System.Process.Read
 import           System.Process.Run
-#ifdef USE_GIT_INFO
-import           Development.GitRev (gitCommitCount, gitHash)
-#endif
 import           Distribution.System (buildArch, buildPlatform)
 import           Distribution.Text (display)
 import           GHC.IO.Encoding (mkTextEncoding, textEncodingName)
 import           Lens.Micro
 import           Network.HTTP.Client
 import           Options.Applicative
-import           Options.Applicative.Help (errorHelp, stringChunk, vcatChunks)
 import           Options.Applicative.Builder.Extra
 import           Options.Applicative.Complicated
-#ifdef USE_GIT_INFO
-import           Options.Applicative.Simple (simpleVersion)
-#endif
+import           Options.Applicative.Help (errorHelp, stringChunk, vcatChunks)
 import           Options.Applicative.Types (readerAsk, ParserHelp(..))
 import           Path
 import           Path.Extra (toFilePathNoTrailingSep)
@@ -71,14 +65,14 @@ import           Stack.Coverage
 import qualified Stack.Docker as Docker
 import           Stack.Dot
 import           Stack.Exec
-import qualified Stack.Nix as Nix
 import           Stack.Fetch
 import           Stack.FileWatch
-import           Stack.GhcPkg (getGlobalDB, mkGhcPackagePath)
+import           Stack.GhcPkg (getGlobalDB, mkGhcPackagePath, ghcPkgCheck, unregisterGhcPkgName)
 import           Stack.Ghci
 import qualified Stack.Image as Image
 import           Stack.Init
 import           Stack.New
+import qualified Stack.Nix as Nix
 import           Stack.Options
 import           Stack.Package (findOrGenerateCabalFile)
 import qualified Stack.PackageIndex
@@ -97,6 +91,11 @@ import           System.Exit
 import           System.FileLock (lockFile, tryLockFile, unlockFile, SharedExclusive(Exclusive), FileLock)
 import           System.FilePath (pathSeparator, searchPathSeparator)
 import           System.IO (hIsTerminalDevice, stderr, stdin, stdout, hSetBuffering, BufferMode(..), hPutStrLn, Handle, hGetEncoding, hSetEncoding)
+
+#ifdef USE_GIT_INFO
+import           Development.GitRev (gitCommitCount, gitHash)
+import           Options.Applicative.Simple (simpleVersion)
+#endif
 
 -- | Change the character encoding of the given Handle to transliterate
 -- on unsupported characters instead of throwing an exception
@@ -153,7 +152,7 @@ main = do
   eGlobalRun <- try $ commandLineHandler progName False
   case eGlobalRun of
     Left (exitCode :: ExitCode) -> do
-      throwIO exitCode
+      throwM exitCode
     Right (globalMonoid,run) -> do
       let global = globalOptsFromMonoid isTerminal globalMonoid
       when (globalLogLevel global == LevelDebug) $ hPutStrLn stderr versionString'
@@ -162,7 +161,7 @@ main = do
               expectVersion' <- parseVersionFromString expectVersion
               if checkVersion MatchMinor expectVersion' (fromCabalVersion Meta.version)
                   then return ()
-                  else throwIO $ InvalidReExecVersion expectVersion (showVersion Meta.version)
+                  else throwM $ InvalidReExecVersion expectVersion (showVersion Meta.version)
           _ -> return ()
       run global `catch` \e ->
           -- This special handler stops "stack: " from being printed before the
@@ -376,6 +375,10 @@ commandLineHandler progName isInterpreter = complicatedOptions
                     "Query general build information (experimental)"
                     queryCmd
                     (many $ strArgument $ metavar "SELECTOR...")
+        addCommand' "unregister-broken"
+                    "Unregister broken packages"
+                    unregisterBrokenCmd
+                    (pure ())
         addSubCommands'
             "ide"
             "IDE-specific commands"
@@ -1230,7 +1233,7 @@ hoogleCmd (args,setup,rebuild) go = withBuildConfig go pathToHaddocks
                  (\(e :: ExitCode) ->
                        case e of
                            ExitSuccess -> resetExeCache menv
-                           _ -> throwIO e))
+                           _ -> EL.throwIO e))
     runHoogle :: [String] -> StackT EnvConfig IO ()
     runHoogle hoogleArgs = do
         config <- asks getConfig
@@ -1428,6 +1431,18 @@ queryCmd selectors go = withBuildConfig go $ queryBuildInfo $ map T.pack selecto
 -- | Generate a combined HPC report
 hpcReportCmd :: HpcReportOpts -> GlobalOpts -> IO ()
 hpcReportCmd hropts go = withBuildConfig go $ generateHpcReportForTargets hropts
+
+unregisterBrokenCmd :: () -> GlobalOpts -> IO ()
+unregisterBrokenCmd () go = withBuildConfig go $ do
+    menv <- getMinimalEnvOverride
+    wc <- getWhichCompiler
+    brokenPackages <- ghcPkgCheck menv wc []
+    if null brokenPackages
+        then $logInfo "'ghc-pkg check' didn't find any broken packages."
+        else do
+            $logInfo $ "'ghc-pkg check' reported the following packages as broken: " <> T.pack (show brokenPackages)
+            $logInfo $ "Unregistering these packages..."
+            mapM_ (unregisterGhcPkgName menv wc []) brokenPackages
 
 data MainException = InvalidReExecVersion String String
      deriving (Typeable)

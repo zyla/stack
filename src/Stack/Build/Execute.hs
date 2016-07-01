@@ -495,7 +495,7 @@ executePlan' installedMap0 targets plan ee@ExecuteEnv {..} = do
                             , ")"
                             ]
                     ]
-                unregisterGhcPkgId eeEnvOverride wc cv localDB id' ident
+                unregisterGhcPkgId eeEnvOverride wc cv [localDB] id' ident
 
     liftIO $ atomically $ modifyTVar' eeLocalDumpPkgs $ \initMap ->
         foldl' (flip Map.delete) initMap $ Map.keys (planUnregisterLocal plan)
