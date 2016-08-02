@@ -26,9 +26,9 @@ nixOptsFromMonoid
     -> m NixOpts
 nixOptsFromMonoid NixOptsMonoid{..} os = do
     let nixEnable = fromFirst (getAny nixMonoidDefaultEnable) nixMonoidEnable
-        defaultPure = case os of
-          OSX -> False
-          _ -> True
+        (defaultPure, nixExplicitelyPassExtraLibs) = case os of
+          OSX -> (False, False)
+          _   -> (True, True)
         nixPureShell = fromFirst defaultPure nixMonoidPureShell
         nixPackages = fromFirst [] nixMonoidPackages
         nixInitFile = getFirst nixMonoidInitFile

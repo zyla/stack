@@ -82,7 +82,7 @@ runShellAndExit mprojectRoot compilerVersion getCmdArgs = do
          ghc = nixCompiler compilerVersion
          pkgs = pkgsInConfig ++ [ghc]
          libsAndIncludes =
-           map (\p -> ("${" <> p <> "}/lib", "${" <> p <> "}/include ")) pkgs
+           map (\p -> ("${" <> p <> "}/lib", "${" <> p <> "}/include")) pkgs
          pureShell = nixPureShell (configNix config)
          nixopts = case mshellFile of
            Just fp -> [toFilePath fp, "--arg", "ghc"
@@ -97,10 +97,14 @@ runShellAndExit mprojectRoot compilerVersion getCmdArgs = do
                                                                 -- needed by builds using Template Haskell
                                ,      (T.intercalate ":" (map fst libsAndIncludes)), "'' ; "
                                ,"STACK_IN_NIX_EXTRA_ARGS=''"
-                               ,      T.intercalate " " (map (\(lib, include) ->
-                                                               "--extra-lib-dirs=" <> lib
-                                                               <> " --extra-include-dirs=" <> include)
-                                                         libsAndIncludes), "'' ; "
+                               ,  if nixExplicitelyPassExtraLibs (configNix config)
+                                  then (T.intercalate " "
+                                        (map (\(lib, include) ->
+                                               "--extra-lib-dirs=" <> lib
+                                               <> " --extra-include-dirs=" <> include <> " ")
+                                         libsAndIncludes))
+                                  else ""
+                               , "'' ; "
                                ,"} \"\""]]
                     -- glibcLocales is necessary on Linux to avoid warnings about GHC being incapable to set the locale.
          fullArgs = concat [if pureShell then ["--pure"] else [],

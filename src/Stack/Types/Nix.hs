@@ -26,6 +26,9 @@ data NixOpts = NixOpts
     -- ^ The path of a file containing preconfiguration of the environment (e.g shell.nix)
   ,nixShellOptions :: ![Text]
     -- ^ Options to be given to the nix-shell command line
+  ,nixExplicitelyPassExtraLibs :: !Bool
+    -- ^ Whether packages should be explicitely passed to inner stack with --extra-lib-dirs
+                                  -- and extra-include-dirs
   }
   deriving (Show)
 
