@@ -24,49 +24,52 @@ module Stack.Options
     ,testOptsParser
     ,haddockOptsParser
     ,hpcReportOptsParser
+    ,sdistOptsParser
     ,pvpBoundsOption
+    ,pvpBoundsOptsParser
     ,globalOptsFromMonoid
     ,splitObjsWarning
     ) where
 
-import           Control.Monad.Logger              (LogLevel (..))
-import           Data.Char                         (isSpace, toLower, toUpper)
-import           Data.List                         (intercalate)
-import           Data.List.Split                   (splitOn)
-import qualified Data.Map                          as Map
-import           Data.Map.Strict                   (Map)
-import qualified Data.Map.Strict                   as M
+import           Control.Monad.Logger (LogLevel (..))
+import           Data.Char (isSpace, toLower, toUpper)
+import           Data.List (intercalate)
+import           Data.List.Split (splitOn)
+import qualified Data.Map as Map
+import           Data.Map.Strict (Map)
+import qualified Data.Map.Strict as M
 import           Data.Maybe
 import           Data.Monoid.Extra
-import qualified Data.Set                          as Set
-import qualified Data.Text                         as T
-import           Data.Text.Read                    (decimal)
-import           Distribution.Version              (anyVersion)
+import qualified Data.Set as Set
+import qualified Data.Text as T
+import           Data.Text.Read (decimal)
+import           Distribution.Version (anyVersion)
 import           Options.Applicative
 import           Options.Applicative.Args
 import           Options.Applicative.Builder.Extra
-import           Options.Applicative.Types         (fromM, oneM, readerAsk)
-import           Stack.Build                       (splitObjsWarning)
-import           Stack.Clean                       (CleanOpts (..))
-import           Stack.Config                      (packagesParser)
+import           Options.Applicative.Types (fromM, oneM, readerAsk)
+import           Stack.Build (splitObjsWarning)
+import           Stack.Clean (CleanOpts (..))
+import           Stack.Config (packagesParser)
 import           Stack.ConfigCmd
 import           Stack.Constants
-import           Stack.Coverage                    (HpcReportOpts (..))
+import           Stack.Coverage (HpcReportOpts (..))
 import           Stack.Docker
-import qualified Stack.Docker                      as Docker
+import qualified Stack.Docker as Docker
 import           Stack.Dot
-import           Stack.Ghci                        (GhciOpts (..))
+import           Stack.Ghci (GhciOpts (..))
 import           Stack.Init
 import           Stack.New
 import           Stack.Nix
-import           Stack.Types.FlagName
-import           Stack.Types.PackageName
-import           Stack.Types.Version
+import           Stack.SDist
+import           Stack.Types.Compiler
 import           Stack.Types.Config
 import           Stack.Types.Docker
+import           Stack.Types.FlagName
 import           Stack.Types.Nix
-import           Stack.Types.Compiler
+import           Stack.Types.PackageName
 import           Stack.Types.TemplateName
+import           Stack.Types.Version
 
 -- | Allows adjust global options depending on their context
 -- Note: This was being used to remove ambibuity between the local and global
@@ -948,6 +951,29 @@ hpcReportOptsParser = HpcReportOpts
     <$> many (textArgument $ metavar "TARGET_OR_TIX")
     <*> switch (long "all" <> help "Use results from all packages and components")
     <*> optional (strOption (long "destdir" <> help "Output directy for HTML report"))
+
+sdistOptsParser :: Parser SDistOpts
+sdistOptsParser = SDistOpts
+    <$> many (strArgument $ metavar "DIR")
+    <*> optional pvpBoundsOptsParser
+    <*> switch (long "ignore-check" <> help "Do not check package for common mistakes")
+    <*> switch (long "sign" <> help "Sign & upload signatures")
+    <*> strOption
+            (long "sig-server" <> metavar "URL" <> showDefault <>
+             value "https://sig.commercialhaskell.org" <>
+             help "URL")
+
+pvpBoundsOptsParser :: Parser PvpBoundsOpts
+pvpBoundsOptsParser = PvpBoundsOpts
+    <$> pvpBoundsOption
+    <*> many (option readDependencyConfigurationSource
+                (long "also-considering" <>
+                 help "Extra dependency configs to consider during bounds generation" <>
+                 metavar "RESOLVER_OR_STACK_YAML"))
+  where
+    readDependencyConfigurationSource =
+        DCSResolver <$> readAbstractResolver <|>
+        DCSProjectConfig <$> str
 
 pvpBoundsOption :: Parser PvpBounds
 pvpBoundsOption =

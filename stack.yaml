@@ -21,3 +21,4 @@ extra-deps:
 - http-conduit-2.2.0
 - path-0.5.8
 - unicode-transforms-0.1.0.1
+- Cabal-1.24.0.0
