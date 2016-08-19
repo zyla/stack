@@ -221,6 +221,7 @@ packageFromPackageDescription packageConfig gpkg pkg =
     , packageDefaultFlags = M.fromList
       [(fromCabalFlagName (flagName flag), flagDefault flag) | flag <- genPackageFlags gpkg]
     , packageAllDeps = S.fromList (M.keys deps)
+    , packageSetupDeps = setupDeps pkg
     , packageHasLibrary = maybe False (buildable . libBuildInfo) (library pkg)
     , packageTests = M.fromList
       [(T.pack (testName t), testInterface t) | t <- testSuites pkg
@@ -270,6 +271,11 @@ packageFromPackageDescription packageConfig gpkg pkg =
     pkgId = package pkg
     name = fromCabalPackageName (pkgName pkgId)
     deps = M.filterWithKey (const . (/= name)) (packageDependencies pkg)
+
+setupDeps :: PackageDescription -> [Dependency]
+setupDeps pkg = fromMaybe [] $ do
+  setupBuildInfo <- D.setupBuildInfo pkg
+  return [d | not (D.defaultSetupDepends setupBuildInfo), d <- D.setupDepends setupBuildInfo]
 
 -- | Generate GHC options for the package's components, and a list of
 -- options which apply generally to the package, not one specific
@@ -501,12 +507,14 @@ getBuildComponentDir Nothing = Nothing
 getBuildComponentDir (Just name) = parseRelDir (name FilePath.</> (name ++ "-tmp"))
 
 -- | Get all dependencies of the package (buildable targets only).
+-- Includes setup-depends.
 packageDependencies :: PackageDescription -> Map PackageName VersionRange
 packageDependencies =
   M.fromListWith intersectVersionRanges .
-  concatMap (fmap (depName &&& depRange) .
-             targetBuildDepends) .
-  allBuildInfo'
+  map (depName &&& depRange) .
+  uncurry (++) .
+  ((concatMap targetBuildDepends .
+  allBuildInfo') &&& setupDeps)
 
 -- | Get all build tool dependencies of the package (buildable targets only).
 packageToolDependencies :: PackageDescription -> Map Text VersionRange
