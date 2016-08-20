@@ -845,7 +845,7 @@ withSingleContext runInBase ActionContext {..} ExecuteEnv {..} task@Task {..} md
                         Just deps ->
                             -- Stack always builds with the global Cabal for various
                             -- reproducibility issues.
-                            let depsMinusCabal
+                            let depsProcessed
                                  = map ghcPkgIdString
                                  $ Set.toList
                                  $ addGlobalPackages deps (Map.elems eeGlobalDumpPkgs)
@@ -858,8 +858,7 @@ withSingleContext runInBase ActionContext {..} ExecuteEnv {..} task@Task {..} md
                                 : ("-package-db=" ++ toFilePathNoTrailingSep (bcoLocalDB eeBaseConfigOpts))
                                 : ["-hide-all-packages"]
                                 ) ++
-                                cabalPackageArg ++
-                                map ("-package-id=" ++) depsMinusCabal
+                                map ("-package-id=" ++) depsProcessed
                         -- This branch is always taken for `stack sdist`.
                         --
                         -- This approach is debatable. It adds access to the
@@ -1517,12 +1516,11 @@ addGlobalPackages deps globals0 =
     res
   where
     -- Initial set of packages: the installed IDs of all dependencies
-    res0 = Map.elems $ Map.filterWithKey (\ident _ -> not $ isCabal ident) deps
+    res0 = Map.elems deps
 
     -- First check on globals: it's not shadowed by a dep, it's not Cabal, and
     -- it's exposed
     goodGlobal1 dp = not (isDep dp)
-                  && not (isCabal $ dpPackageIdent dp)
                   && dpIsExposed dp
     globals1 = filter goodGlobal1 globals0
 
@@ -1536,9 +1534,6 @@ addGlobalPackages deps globals0 =
     ----------------------------------
     -- Some auxiliary helper functions
     ----------------------------------
-
-    -- Is the given package identifier for any version of Cabal
-    isCabal (PackageIdentifier name _) = name == $(mkPackageName "Cabal")
 
     -- Is the given package name provided by the package dependencies?
     isDep dp = packageIdentifierName (dpPackageIdent dp) `Set.member` depNames
