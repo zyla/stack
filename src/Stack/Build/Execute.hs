@@ -765,7 +765,7 @@ withSingleContext :: M env m
 withSingleContext runInBase ActionContext {..} ExecuteEnv {..} task@Task {..} mdeps msuffix inner0 =
     withPackage $ \package cabalfp pkgDir ->
     withLogFile package $ \mlogFile ->
-    withCabal package pkgDir mlogFile $ \cabal ->
+    withCabal package pkgDir mlogFile cabalfp $ \cabal ->
     inner0 package cabalfp pkgDir cabal announce console mlogFile
   where
     announce = announceTask task
@@ -806,7 +806,7 @@ withSingleContext runInBase ActionContext {..} ExecuteEnv {..} task@Task {..} md
                 (liftIO . hClose)
                 $ \h -> inner (Just (logPath, h))
 
-    withCabal package pkgDir mlogFile inner = do
+    withCabal package pkgDir mlogFile cabalfp inner = do
         config <- asks getConfig
 
         unless (configAllowDifferentUser config) $
@@ -819,6 +819,16 @@ withSingleContext runInBase ActionContext {..} ExecuteEnv {..} task@Task {..} md
                 , esLocaleUtf8 = True
                 }
         menv <- liftIO $ configEnvOverride config envSettings
+        (_,_,_,_,sourceMap) <- loadSourceMap AllowNoTargets {- ? -} eeBuildOptsCLI --defaultBuildOptsCLI
+
+        (installedMap, _, _, _) <- getInstalled
+            menv
+            GetInstalledOpts
+                { getInstalledProfiling = False
+                , getInstalledHaddock   = False
+                }
+            sourceMap
+
         getGhcPath <- runOnce $ getCompilerPath Ghc
         getGhcjsPath <- runOnce $ getCompilerPath Ghcjs
         distRelativeDir' <- distRelativeDir
@@ -829,6 +839,8 @@ withSingleContext runInBase ActionContext {..} ExecuteEnv {..} task@Task {..} md
             case (packageSimpleType package, eeSetupExe) of
                 (True, Just setupExe) -> return $ Left setupExe
                 _ -> liftIO $ fmap Right $ getSetupHs pkgDir
+        (_mods, _files, opts) <- getPackageOpts (packageOpts package) sourceMap installedMap [] [] cabalfp
+        let libOpts = fromMaybe [] $ fmap bioPackageFlags $ Map.lookup CLib opts
         inner $ \stripTHLoading args -> do
             let cabalPackageArg
                     -- Omit cabal package dependency when building
@@ -845,7 +857,7 @@ withSingleContext runInBase ActionContext {..} ExecuteEnv {..} task@Task {..} md
                         Just deps ->
                             -- Stack always builds with the global Cabal for various
                             -- reproducibility issues.
-                            let depsMinusCabal
+                            let _depsMinusCabal
                                  = map ghcPkgIdString
                                  $ Set.toList
                                  $ addGlobalPackages deps (Map.elems eeGlobalDumpPkgs)
@@ -859,7 +871,7 @@ withSingleContext runInBase ActionContext {..} ExecuteEnv {..} task@Task {..} md
                                 : ["-hide-all-packages"]
                                 ) ++
                                 cabalPackageArg ++
-                                map ("-package-id=" ++) depsMinusCabal
+                                libOpts --map ("-package-id=" ++) depsMinusCabal
                         -- This branch is always taken for `stack sdist`.
                         --
                         -- This approach is debatable. It adds access to the
