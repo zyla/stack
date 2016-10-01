@@ -1036,10 +1036,15 @@ findCandidate
     -> DotCabalDescriptor
     -> m (Maybe DotCabalPath)
 findCandidate dirs exts name = do
-    pkg <- asks fst >>= parsePackageNameFromFilePath
+    $logDebug ("findCandidate: " <> T.pack (show dirs) <> " " <> T.pack (show exts) <> " " <> T.pack (show name))
+    inReader@(fp,_dp) <- ask
+    $logDebug ("Reader contents: " <> T.pack (show inReader))
+    pkg <- parsePackageNameFromFilePath fp
     candidates <- liftIO makeNameCandidates
     case candidates of
-        [candidate] -> return (Just (cons candidate))
+        [candidate] -> do
+            $logDebug ("found: " <> T.pack (show (cons candidate)))
+            return (Just (cons candidate))
         [] -> do
             case name of
                 DotCabalModule mn
@@ -1048,6 +1053,7 @@ findCandidate dirs exts name = do
             return Nothing
         (candidate:rest) -> do
             warnMultiple name candidate rest
+            $logDebug ("found: " <> T.pack (show (cons candidate)))
             return (Just (cons candidate))
   where
     cons =
