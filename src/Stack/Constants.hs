@@ -46,6 +46,8 @@ import           Control.Monad.Reader
 import           Data.Char (toUpper)
 import           Data.HashSet (HashSet)
 import qualified Data.HashSet as HashSet
+import           Data.Set (Set)
+import qualified Data.Set as Set
 import           Data.Text (Text)
 import           Path as FL
 import           Prelude
@@ -55,8 +57,8 @@ import           Stack.Types.PackageIdentifier
 import           Stack.Types.PackageName
 
 -- | Extensions for anything that can be a Haskell module.
-haskellModuleExts :: [Text]
-haskellModuleExts = haskellFileExts ++ haskellPreprocessorExts
+haskellModuleExts :: (Set Text)
+haskellModuleExts = Set.fromList (haskellFileExts ++ haskellPreprocessorExts)
 
 -- | Extensions used for Haskell modules. Excludes preprocessor ones.
 haskellFileExts :: [Text]

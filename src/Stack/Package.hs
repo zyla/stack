@@ -665,8 +665,8 @@ benchmarkFiles bench = do
     (modules,files,warnings) <-
         resolveFilesAndDeps
             (Just $ benchmarkName bench)
-            (dirs ++ [dir])
-            (bnames <> exposed)
+            (S.insert dir (S.fromList dirs))
+            (S.fromList (bnames <> exposed))
             haskellModuleExts
     cfiles <- buildOtherSources build
     return (modules, files <> cfiles, warnings)
@@ -689,8 +689,8 @@ testFiles test = do
     (modules,files,warnings) <-
         resolveFilesAndDeps
             (Just $ testName test)
-            (dirs ++ [dir])
-            (bnames <> exposed)
+            (S.insert dir (S.fromList dirs))
+            (S.fromList (bnames <> exposed))
             haskellModuleExts
     cfiles <- buildOtherSources build
     return (modules, files <> cfiles, warnings)
@@ -711,12 +711,13 @@ executableFiles
 executableFiles exe = do
     dirs <- mapMaybeM resolveDirOrWarn (hsSourceDirs build)
     dir <- asks (parent . fst)
-    (modules,files,warnings) <-
+    (modules, files, warnings) <-
         resolveFilesAndDeps
             (Just $ exeName exe)
-            (dirs ++ [dir])
-            (map DotCabalModule (otherModules build) ++
-             [DotCabalMain (modulePath exe)])
+            (S.insert dir (S.fromList dirs))
+            (S.fromList
+                 (map DotCabalModule (otherModules build) ++
+                  [DotCabalMain (modulePath exe)]))
             haskellModuleExts
     cfiles <- buildOtherSources build
     return (modules, files <> cfiles, warnings)
@@ -733,13 +734,13 @@ libraryFiles lib = do
     (modules,files,warnings) <-
         resolveFilesAndDeps
             Nothing
-            (dirs ++ [dir])
+            (S.insert dir (S.fromList dirs))
             names
             haskellModuleExts
     cfiles <- buildOtherSources build
     return (modules, files <> cfiles, warnings)
   where
-    names = bnames ++ exposed
+    names = S.fromList (bnames ++ exposed)
     exposed = map DotCabalModule (exposedModules lib)
     bnames = map DotCabalModule (otherModules build)
     build = libBuildInfo lib
@@ -891,53 +892,56 @@ depRange (Dependency _ r) = r
 resolveFilesAndDeps
     :: (MonadIO m, MonadLogger m, MonadCatch m, MonadReader (Path Abs File, Path Abs Dir) m)
     => Maybe String         -- ^ Package component name
-    -> [Path Abs Dir]       -- ^ Directories to look in.
-    -> [DotCabalDescriptor] -- ^ Base names.
-    -> [Text]               -- ^ Extensions.
+    -> Set (Path Abs Dir)       -- ^ Directories to look in.
+    -> Set (DotCabalDescriptor) -- ^ Base names.
+    -> Set (Text)               -- ^ Extensions.
     -> m (Set ModuleName,Set DotCabalPath,[PackageWarning])
 resolveFilesAndDeps component dirs names0 exts = do
     (dotCabalPaths, foundModules, missingModules) <- loop names0 S.empty
     warnings <- liftM2 (++) (warnUnlisted foundModules) (warnMissing missingModules)
     return (foundModules, dotCabalPaths, warnings)
   where
-    loop [] _ = return (S.empty, S.empty, [])
-    loop names doneModules0 = do
-        resolved <- resolveFiles dirs names exts
-        let foundFiles = mapMaybe snd resolved
-            (foundModules', missingModules') = partition (isJust . snd) resolved
-            foundModules = mapMaybe (dotCabalModule . fst) foundModules'
-            missingModules = mapMaybe (dotCabalModule . fst) missingModules'
-        pairs <- mapM (getDependencies component) foundFiles
-        let doneModules =
-                S.union
-                    doneModules0
-                    (S.fromList (mapMaybe dotCabalModule names))
-            moduleDeps = S.unions (map fst pairs)
-            thDepFiles = concatMap snd pairs
-            modulesRemaining = S.difference moduleDeps doneModules
-        -- Ignore missing modules discovered as dependencies - they may
-        -- have been deleted.
-        (resolvedFiles, resolvedModules, _) <-
-            loop (map DotCabalModule (S.toList modulesRemaining)) doneModules
-        return
-            ( S.union
-                  (S.fromList
-                       (foundFiles <> map DotCabalFilePath thDepFiles))
-                  resolvedFiles
-            , S.union
-                  (S.fromList foundModules)
-                  resolvedModules
-            , missingModules)
+    loop names doneModules0 =
+        if S.null names
+            then return (S.empty, S.empty, [])
+            else do
+                resolved <- resolveFiles dirs names exts
+                let foundFiles = mapMaybe snd resolved
+                    (foundModules', missingModules') =
+                        partition (isJust . snd) resolved
+                    foundModules = mapMaybe (dotCabalModule . fst) foundModules'
+                    missingModules = mapMaybe (dotCabalModule . fst) missingModules'
+                pairs <- mapM (getDependencies component) foundFiles
+                let doneModules =
+                        S.union
+                            doneModules0
+                            (S.fromList
+                                 (mapMaybe dotCabalModule (S.toList names)))
+                    moduleDeps = S.unions (map fst pairs)
+                    thDepFiles = concatMap snd pairs
+                    modulesRemaining = S.difference moduleDeps doneModules
+                -- Ignore missing modules discovered as dependencies - they may
+                -- have been deleted.
+                (resolvedFiles, resolvedModules, _) <-
+                    loop (S.map DotCabalModule modulesRemaining) doneModules
+                return
+                    ( S.union
+                          (S.fromList
+                               (foundFiles <> map DotCabalFilePath thDepFiles))
+                          resolvedFiles
+                    , S.union (S.fromList foundModules) resolvedModules
+                    , missingModules)
     warnUnlisted foundModules = do
         let unlistedModules =
                 foundModules `S.difference`
-                S.fromList (mapMaybe dotCabalModule names0)
+                S.fromList (mapMaybe dotCabalModule (S.toList names0))
         return $
             if S.null unlistedModules
                 then []
                 else [ UnlistedModulesWarning
                            component
-                           (S.toList unlistedModules)]
+                           (S.toList unlistedModules)
+                     ]
     warnMissing _missingModules = do
         return []
         -- TODO: bring this back - see
@@ -1020,19 +1024,21 @@ parseDumpHI dumpHIPath = do
 -- extensions.
 resolveFiles
     :: (MonadIO m, MonadLogger m, MonadThrow m, MonadReader (Path Abs File, Path Abs Dir) m)
-    => [Path Abs Dir] -- ^ Directories to look in.
-    -> [DotCabalDescriptor] -- ^ Base names.
-    -> [Text] -- ^ Extensions.
+    => Set (Path Abs Dir) -- ^ Directories to look in.
+    -> Set (DotCabalDescriptor) -- ^ Base names.
+    -> Set (Text) -- ^ Extensions.
     -> m [(DotCabalDescriptor, Maybe DotCabalPath)]
 resolveFiles dirs names exts =
-    forM names (\name -> liftM (name, ) (findCandidate dirs exts name))
+    forM
+        (S.toList names)
+        (\name -> liftM (name, ) (findCandidate dirs exts name))
 
 -- | Find a candidate for the given module-or-filename from the list
 -- of directories and given extensions.
 findCandidate
     :: (MonadIO m, MonadLogger m, MonadThrow m, MonadReader (Path Abs File, Path Abs Dir) m)
-    => [Path Abs Dir]
-    -> [Text]
+    => Set (Path Abs Dir)
+    -> Set (Text)
     -> DotCabalDescriptor
     -> m (Maybe DotCabalPath)
 findCandidate dirs exts name = do
@@ -1058,7 +1064,7 @@ findCandidate dirs exts name = do
             DotCabalCFile{} -> DotCabalCFilePath
     paths_pkg pkg = "Paths_" ++ packageNameString pkg
     makeNameCandidates =
-        liftM (nubOrd . concat) (mapM makeDirCandidates dirs)
+        liftM (nubOrd . concat) (mapM makeDirCandidates (S.toList dirs))
     makeDirCandidates :: Path Abs Dir
                       -> IO [Path Abs File]
     makeDirCandidates dir =
@@ -1072,7 +1078,7 @@ findCandidate dirs exts name = do
                   ((\ ext ->
                      resolveCandidate dir (Cabal.toFilePath mn ++ "." ++ ext))
                    . T.unpack)
-                   exts
+                   (S.toList exts)
     resolveCandidate
         :: (MonadIO m, MonadThrow m)
         => Path Abs Dir -> FilePath.FilePath -> m [Path Abs File]
@@ -1107,7 +1113,7 @@ warnMultiple name candidate rest =
 -- directories.
 logPossibilities
     :: (MonadIO m, MonadThrow m, MonadLogger m)
-    => [Path Abs Dir] -> ModuleName -> m ()
+    => Set (Path Abs Dir) -> ModuleName -> m ()
 logPossibilities dirs mn = do
     possibilities <- liftM concat (makePossibilities mn)
     case possibilities of
@@ -1133,7 +1139,7 @@ logPossibilities dirs mn = do
                                    (isPrefixOf (D.display name) .
                                     toFilePath . filename)
                                    files)))
-            dirs
+            (S.toList dirs)
 
 -- | Get the filename for the cabal file in the given directory.
 --
