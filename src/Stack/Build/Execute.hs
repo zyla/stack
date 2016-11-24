@@ -111,7 +111,7 @@ import           System.Process.Internals (createProcess_)
 #endif
 
 -- | Fetch the packages necessary for a build, for example in combination with a dry run.
-preFetch :: (StackM env m, HasEnvConfig env) => Plan -> m ()
+preFetch :: (StackM env m, HasMaybeEnvConfig env) => Plan -> m ()
 preFetch plan
     | Set.null idents = $logDebug "Nothing to fetch"
     | otherwise = do
@@ -259,7 +259,7 @@ simpleSetupHash =
     encodeUtf8 (T.pack (unwords buildSetupArgs)) <> setupGhciShimCode <> simpleSetupCode
 
 -- | Get a compiled Setup exe
-getSetupExe :: (StackM env m, HasEnvConfig env)
+getSetupExe :: (StackM env m, HasMaybeEnvConfig env)
             => Path Abs File -- ^ Setup.hs input file
             -> Path Abs File -- ^ SetupShim.hs input file
             -> Path Abs Dir -- ^ temporary directory
@@ -322,7 +322,7 @@ getSetupExe setupHs setupShimHs tmpdir = do
             return $ Just exePath
 
 -- | Execute a callback that takes an 'ExecuteEnv'.
-withExecuteEnv :: (StackM env m, HasEnvConfig env)
+withExecuteEnv :: (StackM env m, HasMaybeEnvConfig env)
                => EnvOverride
                -> BuildOpts
                -> BuildOptsCLI
@@ -440,7 +440,7 @@ withExecuteEnv menv bopts boptsCli baseConfigOpts locals globalPackages snapshot
         $logInfo $ T.pack $ "\n--  End of log file: " ++ toFilePath filepath ++ "\n"
 
 -- | Perform the actual plan
-executePlan :: (StackM env m, HasEnvConfig env)
+executePlan :: (StackM env m, HasMaybeEnvConfig env)
             => EnvOverride
             -> BuildOptsCLI
             -> BaseConfigOpts
@@ -575,7 +575,7 @@ windowsRenameCopy src dest = do
     old = dest ++ ".old"
 
 -- | Perform the actual plan (internal)
-executePlan' :: (StackM env m, HasEnvConfig env)
+executePlan' :: (StackM env m, HasMaybeEnvConfig env)
              => InstalledMap
              -> Map PackageName SimpleTarget
              -> Plan
@@ -752,8 +752,8 @@ getConfigCache ExecuteEnv {..} Task {..} installedMap enableTest enableBench = d
                 Just (Executable _) -> Nothing
         missing' = Map.fromList $ mapMaybe getMissing $ Set.toList missing
         TaskConfigOpts missing mkOpts = taskConfigOpts
-        opts = mkOpts missing'
-        allDeps = Set.fromList $ Map.elems missing' ++ Map.elems taskPresent
+    opts <- either throwM return $ mkOpts missing'
+    let allDeps = Set.fromList $ Map.elems missing' ++ Map.elems taskPresent
         cache = ConfigCache
             { configCacheOpts = opts
                 { coNoDirs = coNoDirs opts ++ map T.unpack extra
@@ -940,8 +940,10 @@ withSingleContext runInBase ActionContext {..} ExecuteEnv {..} task@Task {..} md
                     : map (("-package-db=" ++) . toFilePathNoTrailingSep) (bcoExtraDBs eeBaseConfigOpts)
                     ) ++
                     ( ("-package-db=" ++ toFilePathNoTrailingSep (bcoSnapDB eeBaseConfigOpts))
-                    : ("-package-db=" ++ toFilePathNoTrailingSep (bcoLocalDB eeBaseConfigOpts))
-                    : ["-hide-all-packages"]
+                    : ((case bcoLocalDB eeBaseConfigOpts of
+                         Nothing -> id
+                         Just localdb -> (("-package-db=" ++ toFilePathNoTrailingSep localdb):))
+                      ["-hide-all-packages"])
                     )
 
                 getPackageArgs setupDir =
@@ -1323,14 +1325,15 @@ singleBuild runInBase ac@ActionContext {..} ee@ExecuteEnv {..} task@Task {..} in
                 _ -> return ()
             when (packageHasLibrary package) $ cabal False ["register"]
 
-        let (installedPkgDb, installedDumpPkgsTVar) =
-                case taskLocation task of
-                    Snap ->
-                         ( bcoSnapDB eeBaseConfigOpts
-                         , eeSnapshotDumpPkgs )
-                    Local ->
-                        ( bcoLocalDB eeBaseConfigOpts
-                        , eeLocalDumpPkgs )
+        (installedPkgDb, installedDumpPkgsTVar) <-
+            case (taskLocation task, bcoLocalDB eeBaseConfigOpts) of
+                (Snap, _) -> return
+                        ( bcoSnapDB eeBaseConfigOpts
+                        , eeSnapshotDumpPkgs )
+                (Local, Just localdb) -> return
+                    ( localdb
+                    , eeLocalDumpPkgs )
+                (Local, Nothing) -> throwM LocalRequestedWhenNoLocal
         let ident = PackageIdentifier (packageName package) (packageVersion package)
         mpkgid <- if packageHasLibrary package
             then do

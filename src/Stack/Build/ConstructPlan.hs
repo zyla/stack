@@ -21,6 +21,7 @@ import           Control.Monad
 import           Control.Monad.IO.Class
 import           Control.Monad.Logger
 import           Control.Monad.RWS.Strict
+import           Control.Monad.Trans.Reader (runReaderT)
 import           Control.Monad.Trans.Resource
 import           Data.Either
 import           Data.Function
@@ -128,7 +129,8 @@ data Ctx = Ctx
     , loadPackage    :: !(PackageName -> Version -> Map FlagName Bool -> [Text] -> IO Package)
     , combinedMap    :: !CombinedMap
     , toolToPackages :: !(Cabal.Dependency -> Map PackageName VersionRange)
-    , ctxEnvConfig   :: !EnvConfig
+    , ctxEnvConfigL  :: !(Maybe EnvConfigLocal)
+    , ctxEnvConfigNL :: !EnvConfigNoLocal
     , callStack      :: ![PackageName]
     , extraToBuild   :: !(Set PackageName)
     , getVersions    :: !(PackageName -> IO (Set Version))
@@ -141,13 +143,14 @@ instance HasPlatform Ctx
 instance HasGHCVariant Ctx
 instance HasConfig Ctx
 instance HasBuildConfigNoLocal Ctx
-instance HasBuildConfig Ctx
+instance HasMaybeBuildConfig Ctx where
+    maybeBuildConfigLocalL = to (fmap envConfigBuildConfigLocal . ctxEnvConfigL)
 instance HasEnvConfigNoLocal Ctx where
-    envConfigNoLocalL = envConfigL.envConfigNoLocalL
-instance HasEnvConfig Ctx where
-    envConfigL = lens ctxEnvConfig (\x y -> x { ctxEnvConfig = y })
+    envConfigNoLocalL = lens ctxEnvConfigNL (\x y -> x { ctxEnvConfigNL = y })
+instance HasMaybeEnvConfig Ctx where
+    maybeEnvConfigLocalL = to ctxEnvConfigL
 
-constructPlan :: forall env m. (StackM env m, HasEnvConfig env)
+constructPlan :: forall env m. (StackM env m, HasMaybeEnvConfig env)
               => MiniBuildPlan
               -> BaseConfigOpts
               -> [LocalPackage]
@@ -162,14 +165,15 @@ constructPlan mbp0 baseConfigOpts0 locals extraToBuild0 localDumpPkgs loadPackag
     let locallyRegistered = Map.fromList $ map (dpGhcPkgId &&& dpPackageIdent) localDumpPkgs
     getVersions0 <- getPackageVersionsIO
 
-    econfig <- view envConfigL
+    econfignl <- view envConfigNoLocalL
+    econfigl <- view maybeEnvConfigLocalL
     let onWanted = void . addDep False . packageName . lpPackage
     let inner = do
             mapM_ onWanted $ filter lpWanted locals
             mapM_ (addDep False) $ Set.toList extraToBuild0
     lf <- askLoggerIO
     ((), m, W efinals installExes dirtyReason deps warnings parents) <-
-        liftIO $ runRWST inner (ctx econfig getVersions0 lf) M.empty
+        liftIO $ runRWST inner (ctx econfignl econfigl getVersions0 lf) M.empty
     mapM_ $logWarn (warnings [])
     let toEither (_, Left e)  = Left e
         toEither (k, Right v) = Right (k, v)
@@ -197,11 +201,11 @@ constructPlan mbp0 baseConfigOpts0 locals extraToBuild0 localDumpPkgs loadPackag
                 }
         else do
             planDebug $ show errs
-            stackYaml <- view stackYamlL
-            $prettyError $ pprintExceptions errs stackYaml parents (wantedLocalPackages locals)
+            mstackYaml <- fmap (fmap bcStackYaml) $ view maybeBuildConfigLocalL
+            $prettyError $ pprintExceptions errs mstackYaml parents (wantedLocalPackages locals)
             throwM $ ConstructPlanFailed "Plan construction failed."
   where
-    ctx econfig getVersions0 lf = Ctx
+    ctx econfignl econfigl getVersions0 lf = Ctx
         { mbp = mbp0
         , baseConfigOpts = baseConfigOpts0
         , loadPackage = loadPackage0
@@ -209,7 +213,8 @@ constructPlan mbp0 baseConfigOpts0 locals extraToBuild0 localDumpPkgs loadPackag
         , toolToPackages = \(Cabal.Dependency name _) ->
           maybe Map.empty (Map.fromSet (const Cabal.anyVersion)) $
           Map.lookup (T.pack . packageNameString . fromCabalPackageName $ name) toolMap
-        , ctxEnvConfig = econfig
+        , ctxEnvConfigNL = econfignl
+        , ctxEnvConfigL = econfigl
         , callStack = []
         , extraToBuild = extraToBuild0
         , getVersions = getVersions0
@@ -262,7 +267,7 @@ addFinal lp package isAllInOne = do
                 , taskConfigOpts = TaskConfigOpts missing $ \missing' ->
                     let allDeps = Map.union present missing'
                      in configureOpts
-                            (view envConfigL ctx)
+                            (view envConfigNoLocalL ctx)
                             (baseConfigOpts ctx)
                             allDeps
                             True -- local
@@ -443,7 +448,7 @@ installPackageGivenDeps isAllInOne ps package minstalled (missing, present, minL
                 let allDeps = Map.union present missing'
                     destLoc = piiLocation ps <> minLoc
                  in configureOpts
-                        (view envConfigL ctx)
+                        (view envConfigNoLocalL ctx)
                         (baseConfigOpts ctx)
                         allDeps
                         (psLocal ps)
@@ -553,15 +558,28 @@ checkDirtiness :: PackageSource
                -> M Bool
 checkDirtiness ps installed package present wanted = do
     ctx <- ask
-    moldOpts <- flip runLoggingT (logFunc ctx) $ tryGetFlagCache installed
-    let configOpts = configureOpts
-            (view envConfigL ctx)
-            (baseConfigOpts ctx)
-            present
-            (psLocal ps)
-            (piiLocation ps) -- should be Local always
-            package
-        buildOpts = bcoBuildOpts (baseConfigOpts ctx)
+
+    menvConfigLocal <- view maybeEnvConfigLocalL
+    moldOpts <-
+        case menvConfigLocal of
+            -- FIXME need to ensure that simply assuming Nothing here
+            -- is valid for the no-local case
+            Nothing -> return Nothing
+            Just envConfigLocal -> do
+                envConfigNoLocal <- view envConfigNoLocalL
+                runLoggingT
+                    (runReaderT
+                        (tryGetFlagCache installed)
+                        (EnvConfig envConfigNoLocal envConfigLocal))
+                    (logFunc ctx)
+    configOpts <- configureOpts
+        (view envConfigNoLocalL ctx)
+        (baseConfigOpts ctx)
+        present
+        (psLocal ps)
+        (piiLocation ps) -- should be Local always
+        package
+    let buildOpts = bcoBuildOpts (baseConfigOpts ctx)
         wantConfigCache = ConfigCache
             { configCacheOpts = configOpts
             , configCacheDeps = Set.fromList $ Map.elems present
@@ -781,17 +799,17 @@ data BadDependency
 
 pprintExceptions
     :: [ConstructPlanException]
-    -> Path Abs File
+    -> Maybe (Path Abs File)
     -> ParentMap
     -> Set PackageName
     -> AnsiDoc
-pprintExceptions exceptions stackYaml parentMap wanted =
+pprintExceptions exceptions mstackYaml parentMap wanted =
     "While constructing the build plan, the following exceptions were encountered:" <> line <> line <>
     mconcat (intersperse (line <> line) (mapMaybe pprintException exceptions')) <> line <>
     if Map.null extras then "" else
         line <>
         "Recommended action: try adding the following to your extra-deps in" <+>
-        toAnsiDoc (display stackYaml) <> ":" <>
+        toAnsiDoc (maybe "<no stack.yaml file>" display mstackYaml) <> ":" <>
         line <>
         vsep (map pprintExtra (Map.toList extras)) <>
         line <>

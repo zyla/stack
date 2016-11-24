@@ -44,7 +44,7 @@ module Stack.Types.Build
     where
 
 import           Control.DeepSeq
-import           Control.Exception
+import           Control.Exception.Safe
 import           Data.Binary                     (Binary)
 import           Data.Binary.Tagged              (HasSemanticVersion,
                                                   HasStructuralInfo)
@@ -110,7 +110,7 @@ data StackBuildException
   | UnknownTargets
     (Set PackageName) -- no known version
     (Map PackageName Version) -- not in snapshot, here's the most recent version in the index
-    (Path Abs File) -- stack.yaml
+    (Maybe (Path Abs File)) -- stack.yaml
   | TestSuiteFailure PackageIdentifier (Map Text (Maybe ExitCode)) (Maybe (Path Abs File)) S.ByteString
   | TestSuiteTypeUnsupported TestSuiteInterface
   | ConstructPlanFailed String
@@ -135,6 +135,7 @@ data StackBuildException
   | SomeTargetsNotBuildable [(PackageName, NamedComponent)]
   | TestSuiteExeMissing Bool String String String
   | CabalCopyFailed Bool String
+  | LocalRequestedWhenNoLocal
   deriving Typeable
 
 data FlagSource = FSCommandLine | FSStackYaml
@@ -181,7 +182,7 @@ instance Show StackBuildException where
     show (Couldn'tParseTargets targets) = unlines
                 $ "The following targets could not be parsed as package names or directories:"
                 : map T.unpack targets
-    show (UnknownTargets noKnown notInSnapshot stackYaml) =
+    show (UnknownTargets noKnown notInSnapshot mstackYaml) =
         unlines $ noKnown' ++ notInSnapshot'
       where
         noKnown'
@@ -192,9 +193,8 @@ instance Show StackBuildException where
                 "\nSee https://docs.haskellstack.org/en/v"
                 <> showVersion Meta.version <>
                 "/build_command/#target-syntax for details."
-        notInSnapshot'
-            | Map.null notInSnapshot = []
-            | otherwise =
+        notInSnapshot' = case (Map.null notInSnapshot, mstackYaml) of
+            (False, Just stackYaml) ->
                   "The following packages are not in your snapshot, but exist"
                 : "in your package index. Recommended action: add them to your"
                 : ("extra-deps in " ++ toFilePath stackYaml)
@@ -205,6 +205,7 @@ instance Show StackBuildException where
                     (\(name, version') -> "- " ++ packageIdentifierString
                         (PackageIdentifier name version'))
                     (Map.toList notInSnapshot)
+            _ -> []
     show (TestSuiteFailure ident codes mlogFile bs) = unlines $ concat
         [ ["Test suite failure for package " ++ packageIdentifierString ident]
         , flip map (Map.toList codes) $ \(name, mcode) -> concat
@@ -338,6 +339,7 @@ instance Show StackBuildException where
             , "\n"
             ]
     show (ConstructPlanFailed msg) = msg
+    show LocalRequestedWhenNoLocal = "Local snapshot information was requested, but you're using the script command"
 
 missingExeError :: Bool -> String -> String
 missingExeError isSimpleBuildType msg =
@@ -415,7 +417,7 @@ data Task = Task
 data TaskConfigOpts = TaskConfigOpts
     { tcoMissing :: !(Set PackageIdentifier)
       -- ^ Dependencies for which we don't yet have an GhcPkgId
-    , tcoOpts    :: !(Map PackageIdentifier GhcPkgId -> ConfigureOpts)
+    , tcoOpts    :: !(Map PackageIdentifier GhcPkgId -> Either SomeException ConfigureOpts)
       -- ^ Produce the list of options given the missing @GhcPkgId@s
     }
 instance Show TaskConfigOpts where
@@ -453,9 +455,9 @@ data Plan = Plan
 -- | Basic information used to calculate what the configure options are
 data BaseConfigOpts = BaseConfigOpts
     { bcoSnapDB :: !(Path Abs Dir)
-    , bcoLocalDB :: !(Path Abs Dir)
+    , bcoLocalDB :: !(Maybe (Path Abs Dir))
     , bcoSnapInstallRoot :: !(Path Abs Dir)
-    , bcoLocalInstallRoot :: !(Path Abs Dir)
+    , bcoLocalInstallRoot :: !(Maybe (Path Abs Dir))
     , bcoBuildOpts :: !BuildOpts
     , bcoBuildOptsCLI :: !BuildOptsCLI
     , bcoExtraDBs :: ![Path Abs Dir]
@@ -463,17 +465,20 @@ data BaseConfigOpts = BaseConfigOpts
     deriving Show
 
 -- | Render a @BaseConfigOpts@ to an actual list of options
-configureOpts :: EnvConfig
+configureOpts :: MonadThrow m
+              => EnvConfigNoLocal
               -> BaseConfigOpts
               -> Map PackageIdentifier GhcPkgId -- ^ dependencies
               -> Bool -- ^ local non-extra-dep?
               -> InstallLocation
               -> Package
-              -> ConfigureOpts
-configureOpts econfig bco deps isLocal loc package = ConfigureOpts
-    { coDirs = configureOptsDirs bco loc package
-    , coNoDirs = configureOptsNoDir econfig bco deps isLocal package
-    }
+              -> m ConfigureOpts
+configureOpts econfig bco deps isLocal loc package = do
+    dirs <- configureOptsDirs bco loc package
+    return ConfigureOpts
+      { coDirs = dirs
+      , coNoDirs = configureOptsNoDir econfig bco deps isLocal package
+      }
 
 -- options set by stack
 isStackOpt :: Text -> Bool
@@ -497,15 +502,25 @@ isStackOpt t = any (`T.isPrefixOf` t)
     , "--exact-configuration"
     ] || t == "--user"
 
-configureOptsDirs :: BaseConfigOpts
+configureOptsDirs :: MonadThrow m
+                  => BaseConfigOpts
                   -> InstallLocation
                   -> Package
-                  -> [String]
-configureOptsDirs bco loc package = concat
+                  -> m [String]
+configureOptsDirs bco loc package = do
+  (dbs, installRoot) <-
+    case (loc, bcoLocalDB bco, bcoLocalInstallRoot bco) of
+      (Local, Just localdb, Just installRoot) ->
+        return (bcoExtraDBs bco ++ [bcoSnapDB bco] ++ [localdb], installRoot)
+      (Local, _, _) -> throwM LocalRequestedWhenNoLocal
+      (Snap, _, _) -> return (bcoExtraDBs bco ++ [bcoSnapDB bco], bcoSnapInstallRoot bco)
+  let docDir =
+        case pkgVerDir of
+            Nothing -> installRoot </> docDirSuffix
+            Just dir -> installRoot </> docDirSuffix </> dir
+  return $ concat
     [ ["--user", "--package-db=clear", "--package-db=global"]
-    , map (("--package-db=" ++) . toFilePathNoTrailingSep) $ case loc of
-        Snap -> bcoExtraDBs bco ++ [bcoSnapDB bco]
-        Local -> bcoExtraDBs bco ++ [bcoSnapDB bco] ++ [bcoLocalDB bco]
+    , map (("--package-db=" ++) . toFilePathNoTrailingSep) dbs
     , [ "--libdir=" ++ toFilePathNoTrailingSep (installRoot </> $(mkRelDir "lib"))
       , "--bindir=" ++ toFilePathNoTrailingSep (installRoot </> bindirSuffix)
       , "--datadir=" ++ toFilePathNoTrailingSep (installRoot </> $(mkRelDir "share"))
@@ -516,21 +531,13 @@ configureOptsDirs bco loc package = concat
       , "--haddockdir=" ++ toFilePathNoTrailingSep docDir]
     ]
   where
-    installRoot =
-        case loc of
-            Snap -> bcoSnapInstallRoot bco
-            Local -> bcoLocalInstallRoot bco
-    docDir =
-        case pkgVerDir of
-            Nothing -> installRoot </> docDirSuffix
-            Just dir -> installRoot </> docDirSuffix </> dir
     pkgVerDir =
         parseRelDir (packageIdentifierString (PackageIdentifier (packageName package)
                                                                 (packageVersion package)) ++
                      [pathSeparator])
 
 -- | Same as 'configureOpts', but does not include directory path options
-configureOptsNoDir :: EnvConfig
+configureOptsNoDir :: EnvConfigNoLocal
                    -> BaseConfigOpts
                    -> Map PackageIdentifier GhcPkgId -- ^ dependencies
                    -> Bool -- ^ is this a local, non-extra-dep?

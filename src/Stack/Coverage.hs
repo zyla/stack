@@ -61,7 +61,7 @@ import           Trace.Hpc.Tix
 import           Web.Browser (openBrowser)
 
 -- | Invoked at the beginning of running with "--coverage"
-deleteHpcReports :: (StackM env m, HasEnvConfig env)
+deleteHpcReports :: (StackM env m, HasMaybeEnvConfig env)
                  => m ()
 deleteHpcReports = do
     hpcDir <- hpcReportDir

@@ -65,9 +65,10 @@ openHaddocksInBrowser
     -- ^ Build targets as determined by 'Stack.Build.Source.loadSourceMap'
     -> m ()
 openHaddocksInBrowser bco pkgLocations buildTargets = do
+    localDepsDocDir' <- maybe (throwM LocalRequestedWhenNoLocal) return (localDepsDocDir bco)
     let cliTargets = (boptsCLITargets . bcoBuildOptsCLI) bco
         getDocIndex = do
-            let localDocs = haddockIndexFile (localDepsDocDir bco)
+            let localDocs = haddockIndexFile localDepsDocDir'
             localExists <- doesFileExist localDocs
             if localExists
                 then return localDocs
@@ -81,10 +82,10 @@ openHaddocksInBrowser bco pkgLocations buildTargets = do
         case (cliTargets, map (`Map.lookup` pkgLocations) (Set.toList buildTargets)) of
             ([_], [Just (pkgId, iloc)]) -> do
                 pkgRelDir <- (parseRelDir . packageIdentifierString) pkgId
-                let docLocation =
-                        case iloc of
-                            Snap -> snapDocDir bco
-                            Local -> localDocDir bco
+                docLocation <-
+                    case iloc of
+                        Snap -> return $ snapDocDir bco
+                        Local -> maybe (throwM LocalRequestedWhenNoLocal) return (localDocDir bco)
                 let docFile = haddockIndexFile (docLocation </> pkgRelDir)
                 exists <- doesFileExist docFile
                 if exists
@@ -133,6 +134,7 @@ generateLocalHaddockIndex envOverride wc bco localDumpPkgs locals = do
                         (\dp -> dpPackageIdent dp == PackageIdentifier packageName packageVersion)
                         localDumpPkgs)
                 locals
+    localDocDir' <- maybe (throwM LocalRequestedWhenNoLocal) return (localDocDir bco)
     generateHaddockIndex
         "local packages"
         envOverride
@@ -140,7 +142,7 @@ generateLocalHaddockIndex envOverride wc bco localDumpPkgs locals = do
         (boptsHaddockOpts (bcoBuildOpts bco))
         dumpPackages
         "."
-        (localDocDir bco)
+        localDocDir'
 
 -- | Generate Haddock index and contents for local packages and their dependencies.
 generateDepsHaddockIndex
@@ -155,7 +157,7 @@ generateDepsHaddockIndex
     -> m ()
 generateDepsHaddockIndex envOverride wc bco globalDumpPkgs snapshotDumpPkgs localDumpPkgs locals = do
     let deps = (mapMaybe (`lookupDumpPackage` allDumpPkgs) . nubOrd . findTransitiveDepends . mapMaybe getGhcPkgId) locals
-        depDocDir = localDepsDocDir bco
+    depDocDir <- maybe (throwM LocalRequestedWhenNoLocal) return (localDepsDocDir bco)
     generateHaddockIndex
         "local packages and dependencies"
         envOverride
@@ -309,12 +311,12 @@ haddockIndexFile :: Path Abs Dir -> Path Abs File
 haddockIndexFile destDir = destDir </> $(mkRelFile "index.html")
 
 -- | Path of local packages documentation directory.
-localDocDir :: BaseConfigOpts -> Path Abs Dir
-localDocDir bco = bcoLocalInstallRoot bco </> docDirSuffix
+localDocDir :: BaseConfigOpts -> Maybe (Path Abs Dir)
+localDocDir bco = (</> docDirSuffix) <$> bcoLocalInstallRoot bco
 
 -- | Path of documentation directory for the dependencies of local packages
-localDepsDocDir :: BaseConfigOpts -> Path Abs Dir
-localDepsDocDir bco = localDocDir bco </> $(mkRelDir "all")
+localDepsDocDir :: BaseConfigOpts -> Maybe (Path Abs Dir)
+localDepsDocDir bco = (</> $(mkRelDir "all")) <$> localDocDir bco
 
 -- | Path of snapshot packages documentation directory.
 snapDocDir :: BaseConfigOpts -> Path Abs Dir
