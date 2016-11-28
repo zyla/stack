@@ -123,6 +123,7 @@ module Stack.Types.Config
   ,hpcReportDir
   ,installationRootDeps
   ,installationRootLocal
+  ,bindirCompilerTools
   ,hoogleRoot
   ,hoogleDatabasePath
   ,packageDatabaseDeps
@@ -1274,6 +1275,20 @@ installationRootLocal = do
     psc <- useShaPathOnWindows =<< platformSnapAndCompilerRel
     return $ getProjectWorkDir bc </> $(mkRelDir "install") </> psc
 
+-- | Installation root for compiler tools
+bindirCompilerTools :: (MonadThrow m, MonadReader env m, HasEnvConfig env) => m (Path Abs Dir)
+bindirCompilerTools = do
+    config <- asks getConfig
+    platform <- platformGhcRelDir
+    compilerVersion <- asks (envConfigCompilerVersion . getEnvConfig)
+    compiler <- parseRelDir $ compilerVersionString compilerVersion
+    return $
+        configStackRoot config </>
+        $(mkRelDir "compiler-tools") </>
+        platform </>
+        compiler </>
+        bindirSuffix
+
 -- | Hoogle directory.
 hoogleRoot :: (MonadThrow m, MonadReader env m, HasEnvConfig env) => m (Path Abs Dir)
 hoogleRoot = do
@@ -1406,9 +1421,10 @@ extraBinDirs :: (MonadThrow m, MonadReader env m, HasEnvConfig env)
 extraBinDirs = do
     deps <- installationRootDeps
     local <- installationRootLocal
+    tools <- bindirCompilerTools
     return $ \locals -> if locals
-        then [local </> bindirSuffix, deps </> bindirSuffix]
-        else [deps </> bindirSuffix]
+        then [local </> bindirSuffix, deps </> bindirSuffix, tools]
+        else [deps </> bindirSuffix, tools]
 
 -- | Get the minimal environment override, useful for just calling external
 -- processes like git or ghc

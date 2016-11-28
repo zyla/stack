@@ -35,6 +35,9 @@ buildOptsFromMonoid BuildOptsMonoid{..} = BuildOpts
     , boptsInstallExes = fromFirst
           (boptsInstallExes defaultBuildOpts)
           buildMonoidInstallExes
+    , boptsInstallCompilerTool = fromFirst
+          (boptsInstallCompilerTool defaultBuildOpts)
+          buildMonoidInstallCompilerTool
     , boptsPreFetch = fromFirst
           (boptsPreFetch defaultBuildOpts)
           buildMonoidPreFetch

@@ -85,6 +85,9 @@ Other enhancements:
 * `stack build` and related commands now allow the user to disable debug symbol stripping
   with new `--no-strip`, `--no-library-stripping`, and `--no-executable-shipping` flags,
   closing [#877](https://github.com/commercialhaskell/stack/issues/877).
+* Addition of `stack build --copy-compiler-tool`, to allow tools like
+  intero to be installed globally for a particular compiler.
+  [#2643](https://github.com/commercialhaskell/stack/issues/2643)
 
 Bug fixes:
 

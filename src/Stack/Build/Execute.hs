@@ -458,7 +458,10 @@ executePlan menv boptsCli baseConfigOpts locals globalPackages snapshotPackages 
     unless (Map.null $ planInstallExes plan) $ do
         snapBin <- (</> bindirSuffix) `liftM` installationRootDeps
         localBin <- (</> bindirSuffix) `liftM` installationRootLocal
-        destDir <- asks $ configLocalBin . getConfig
+        destDir <-
+            if boptsInstallCompilerTool bopts
+                then bindirCompilerTools
+                else asks $ configLocalBin . getConfig
         ensureDir destDir
 
         destDir' <- liftIO . D.canonicalizePath . toFilePath $ destDir
@@ -510,45 +513,46 @@ executePlan menv boptsCli baseConfigOpts locals globalPackages snapshotPackages 
                 , ":"]
         forM_ installed $ \exe -> $logInfo ("- " <> exe)
 
-        searchPath <- liftIO FP.getSearchPath
-        destDirIsInPATH <- liftIO $
-            anyM (\dir -> D.doesDirectoryExist dir &&^ fmap (FP.equalFilePath destDir') (D.canonicalizePath dir)) searchPath
-        if destDirIsInPATH
-            then forM_ installed $ \exe -> do
-                mexePath <- (liftIO . D.findExecutable . T.unpack) exe
-                case mexePath of
-                    Just exePath -> do
-                        exeDir <- (liftIO . fmap FP.takeDirectory . D.canonicalizePath) exePath
-                        unless (exeDir `FP.equalFilePath` destDir') $ do
+        unless (boptsInstallCompilerTool bopts) $ do
+            searchPath <- liftIO FP.getSearchPath
+            destDirIsInPATH <- liftIO $
+                anyM (\dir -> D.doesDirectoryExist dir &&^ fmap (FP.equalFilePath destDir') (D.canonicalizePath dir)) searchPath
+            if destDirIsInPATH
+                then forM_ installed $ \exe -> do
+                    mexePath <- (liftIO . D.findExecutable . T.unpack) exe
+                    case mexePath of
+                        Just exePath -> do
+                            exeDir <- (liftIO . fmap FP.takeDirectory . D.canonicalizePath) exePath
+                            unless (exeDir `FP.equalFilePath` destDir') $ do
+                                $logWarn ""
+                                $logWarn $ T.concat
+                                    [ "WARNING: The \""
+                                    , exe
+                                    , "\" executable found on the PATH environment variable is "
+                                    , T.pack exePath
+                                    , ", and not the version that was just installed."
+                                    ]
+                                $logWarn $ T.concat
+                                    [ "This means that \""
+                                    , exe
+                                    , "\" calls on the command line will not use this version."
+                                    ]
+                        Nothing -> do
                             $logWarn ""
                             $logWarn $ T.concat
-                                [ "WARNING: The \""
+                                [ "WARNING: Installation path "
+                                , T.pack destDir'
+                                , " is on the PATH but the \""
                                 , exe
-                                , "\" executable found on the PATH environment variable is "
-                                , T.pack exePath
-                                , ", and not the version that was just installed."
+                                , "\" executable that was just installed could not be found on the PATH."
                                 ]
-                            $logWarn $ T.concat
-                                [ "This means that \""
-                                , exe
-                                , "\" calls on the command line will not use this version."
-                                ]
-                    Nothing -> do
-                        $logWarn ""
-                        $logWarn $ T.concat
-                            [ "WARNING: Installation path "
-                            , T.pack destDir'
-                            , " is on the PATH but the \""
-                            , exe
-                            , "\" executable that was just installed could not be found on the PATH."
-                            ]
-            else do
-                $logWarn ""
-                $logWarn $ T.concat
-                    [ "WARNING: Installation path "
-                    , T.pack destDir'
-                    , " not found on the PATH environment variable"
-                    ]
+                else do
+                    $logWarn ""
+                    $logWarn $ T.concat
+                        [ "WARNING: Installation path "
+                        , T.pack destDir'
+                        , " not found on the PATH environment variable"
+                        ]
 
     config <- asks getConfig
     menv' <- liftIO $ configEnvOverride config EnvSettings

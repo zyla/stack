@@ -37,7 +37,7 @@ buildOptsMonoidParser hide0 =
                   additionalArgs
                 }
               }
-          | noStripping = 
+          | noStripping =
               opts
               { buildMonoidLibStrip = First (Just False)
               , buildMonoidExeStrip = First (Just False)
@@ -96,9 +96,9 @@ buildOptsMonoidParser hide0 =
 
     options =
         BuildOptsMonoid <$> libProfiling <*> exeProfiling <*> libStripping <*>
-        exeStripping <*> haddock <*> haddockOptsParser hideBool <*> 
+        exeStripping <*> haddock <*> haddockOptsParser hideBool <*>
         openHaddocks <*> haddockDeps <*> haddockInternal <*> copyBins <*>
-        preFetch <*> keepGoing <*> forceDirty <*> tests <*>
+        copyCompilerTool <*> preFetch <*> keepGoing <*> forceDirty <*> tests <*>
         testOptsParser hideBool <*> benches <*> benchOptsParser hideBool <*>
         reconfigure <*> cabalVerbose <*> splitObjs
 
@@ -143,6 +143,11 @@ buildOptsMonoidParser hide0 =
         firstBoolFlags
             "copy-bins"
             "copying binaries to the local-bin-path (see 'stack path')"
+            hide
+    copyCompilerTool =
+        firstBoolFlags
+            "copy-compiler-tool"
+            "copying binaries of targets to compiler-tools-bin (see 'stack path')"
             hide
     keepGoing =
         firstBoolFlags
