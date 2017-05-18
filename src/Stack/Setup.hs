@@ -31,6 +31,7 @@ module Stack.Setup
   , downloadStackExe
   ) where
 
+import              Bindings.Uname (uname, release)
 import qualified    Codec.Archive.Tar as Tar
 import              Control.Applicative
 import              Control.Concurrent.Async.Lifted (Concurrently(..))
@@ -59,6 +60,7 @@ import qualified    Data.HashMap.Strict as HashMap
 import              Data.IORef
 import              Data.IORef.RunOnce (runOnce)
 import              Data.List hiding (concat, elem, maximumBy, any)
+import              Data.List.Split (splitOn)
 import              Data.Map (Map)
 import qualified    Data.Map as Map
 import              Data.Maybe
@@ -74,9 +76,11 @@ import qualified    Data.Text.Encoding.Error as T
 import              Data.Time.Clock (NominalDiffTime, diffUTCTime, getCurrentTime)
 import              Data.Typeable (Typeable)
 import qualified    Data.Yaml as Yaml
-import              Distribution.System (OS (Linux), Arch (..), Platform (..))
+import              Distribution.System (OS (Linux, OpenBSD), Arch (..), Platform (..))
 import qualified    Distribution.System as Cabal
 import              Distribution.Text (simpleParse)
+import              Foreign.C (throwErrnoIfMinus1_, peekCString)
+import              Foreign.Marshal (alloca)
 import              Lens.Micro (set)
 import              Network.HTTP.Simple (getResponseBody, httpLBS, withResponse, getResponseStatusCode)
 import              Network.HTTP.Download
@@ -600,6 +604,9 @@ getGhcBuild menv = do
                 case libComponents ++ pieComponents of
                     [] -> useBuild CompilerBuildStandard
                     components -> useBuild (CompilerBuildSpecialized (intercalate "-" components))
+            Platform _ Cabal.OpenBSD -> do
+                releaseStr <- mungeRelease <$> sysRelease
+                useBuild (CompilerBuildSpecialized releaseStr)
             _ -> useBuild CompilerBuildStandard
     useBuild CompilerBuildStandard = do
         $logDebug "Using standard GHC build"
@@ -607,6 +614,24 @@ getGhcBuild menv = do
     useBuild (CompilerBuildSpecialized s) = do
         $logDebug ("Using " <> T.pack s <> " GHC build")
         return (CompilerBuildSpecialized s)
+
+-- | Encode an OpenBSD version (like "6.1") into a valid argument for
+-- CompilerBuildSpecialized, so "maj6-min1". Later version numbers are prefixed
+-- with "r".
+-- The result r must be such that "ghc-" ++ r is a valid package name,
+-- as recognized by parsePackageNameFromString.
+mungeRelease :: String -> String
+mungeRelease = intercalate "-" . prefixMaj . splitOn "."
+  where
+    prefixFst pfx k (first : rest) = (pfx ++ first) : k rest
+    prefixFst _ _ [] = []
+    prefixMaj = prefixFst "maj" prefixMin
+    prefixMin = prefixFst "min" (map ('r':))
+
+sysRelease :: MonadIO m => m String
+sysRelease = liftIO $ alloca $ \ ptr ->
+           do throwErrnoIfMinus1_ "uname" $ uname ptr
+              peekCString $ release ptr
 
 -- | Ensure Docker container-compatible 'stack' executable is downloaded
 ensureDockerStackExe

@@ -6,6 +6,7 @@ image:
 extra-deps:
 - store-0.4.1
 - store-core-0.4
+- bindings-uname-0.1
 nix:
   # --nix on the command-line to enable.
   enable: false
