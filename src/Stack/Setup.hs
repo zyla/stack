@@ -35,7 +35,7 @@ import              Bindings.Uname (uname, release)
 import qualified    Codec.Archive.Tar as Tar
 import              Control.Applicative
 import              Control.Concurrent.Async.Lifted (Concurrently(..))
-import              Control.Exception.Safe (catchIO, tryAny)
+import              Control.Exception.Safe (handleIO, catchIO, tryAny)
 import              Control.Monad (liftM, when, join, void, unless, guard)
 import              Control.Monad.Catch
 import              Control.Monad.IO.Class (MonadIO, liftIO)
@@ -628,10 +628,17 @@ mungeRelease = intercalate "-" . prefixMaj . splitOn "."
     prefixMaj = prefixFst "maj" prefixMin
     prefixMin = prefixFst "min" (map ('r':))
 
-sysRelease :: MonadIO m => m String
-sysRelease = liftIO $ alloca $ \ ptr ->
-           do throwErrnoIfMinus1_ "uname" $ uname ptr
-              peekCString $ release ptr
+sysRelease :: (MonadCatch m, MonadIO m, MonadLogger m) => m String
+sysRelease =
+  handleIO (\e -> do
+               $logWarn $ T.concat [ T.pack "Could not query OS version"
+                                   , T.pack $ show e
+                                   ]
+               return "") .
+  liftIO .
+  alloca $ \ ptr ->
+             do throwErrnoIfMinus1_ "uname" $ uname ptr
+                peekCString $ release ptr
 
 -- | Ensure Docker container-compatible 'stack' executable is downloaded
 ensureDockerStackExe
