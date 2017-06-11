@@ -55,6 +55,9 @@ Other enhancements:
   wired-in packages. See
   [#3172](https://github.com/commercialhaskell/stack/issues/3172).
 * MinGW bin folder now is searched for dynamic libraries. See [#3126](https://github.com/commercialhaskell/stack/issues/3126)
+* For filesystem setup-info paths, it's no longer assumed that the
+  directory is writable, instead a temp dir is used.  See
+  [#3188](https://github.com/commercialhaskell/stack/issues/3188).
 
 Bug fixes:
 
