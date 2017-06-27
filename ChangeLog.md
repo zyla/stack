@@ -57,6 +57,15 @@ Other enhancements:
 * MinGW bin folder now is searched for dynamic libraries. See [#3126](https://github.com/commercialhaskell/stack/issues/3126)
 * When using Nix, nix-shell now depends always on git to prevent runtime errors
   while fetching metadata
+* When running `stack upgrade` from a file which is different from the
+  default executable path (e.g., on POSIX systems,
+  `~/.local/bin/stack`), it will now additionally copy the new
+  executable over the currently running `stack` executable. If
+  permission is denied (such as in `/usr/local/bin/stack`), the user
+  will be prompted to try again using `sudo`. This is intended to
+  assist with the user experience when the `PATH` environment variable
+  has not been properly configured, see
+  [#3232](https://github.com/commercialhaskell/stack/issues/3232).
 
 Bug fixes:
 
