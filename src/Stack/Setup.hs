@@ -1864,16 +1864,24 @@ performPathChecking newFile = do
                           , ": "
                           , unwords (cmd:args)
                           ]
-              run "sudo"
-                [ "cp"
-                , toFilePath newFile
-                , toFilePath tmpFile
-                ]
-              run "sudo"
-                [ "mv"
-                , toFilePath tmpFile
-                , executablePath
-                ]
+                  commands =
+                    [ ("sudo",
+                        [ "cp"
+                        , toFilePath newFile
+                        , toFilePath tmpFile
+                        ])
+                    , ("sudo",
+                        [ "mv"
+                        , toFilePath tmpFile
+                        , executablePath
+                        ])
+                    ]
+              $logInfo "Going to run the following commands:"
+              $logInfo ""
+              forM_ commands $ \(cmd, args) ->
+                $logInfo $ "-  " `T.append` T.unwords (map T.pack (cmd:args))
+              mapM_ (uncurry run) commands
+              $logInfo ""
               $logInfo "sudo file copy worked!"
         | otherwise -> throwM e
 
