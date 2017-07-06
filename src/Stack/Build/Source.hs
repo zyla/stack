@@ -99,7 +99,14 @@ loadSourceMapFull needTargets boptsCli = do
     checkComponentsBuildable locals
 
     -- TODO for extra sanity, confirm that the targets we threw away are all TargetAll
-    let nonProjectTargets = Map.keysSet targets `Set.difference` Map.keysSet (lpProject lp)
+    let nonProjectTargets =
+          (Map.keysSet targets `Set.difference` Map.keysSet (lpProject lp))
+
+          -- Never try to rebuild a package in the global
+          -- database. Without this, a command like `stack build ghc`
+          -- will fail because Stack cannot find the package ghc in
+          -- the package index.
+          `Set.difference` Map.keysSet (lsGlobals ls)
 
     -- Combine the local packages, extra-deps, and LoadedSnapshot into
     -- one unified source map.

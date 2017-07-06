@@ -434,6 +434,7 @@ data Target
   -- ^ Build all of the default components.
   | TargetComps !(Set NamedComponent)
   -- ^ Only build specific components
+  deriving Show
 
 data PackageType = ProjectPackage | Dependency
   deriving (Eq, Show)
