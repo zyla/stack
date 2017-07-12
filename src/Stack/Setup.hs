@@ -42,7 +42,7 @@ import              Control.Monad.Logger
 import              Control.Monad.Reader (MonadReader, ReaderT (..))
 import              Control.Monad.State (get, put, modify)
 import              Control.Monad.Trans.Control
-import "cryptonite" Crypto.Hash (SHA1(..))
+import "cryptonite" Crypto.Hash (SHA1(..), SHA256(..))
 import              Data.Aeson.Extended
 import qualified    Data.ByteString as S
 import qualified    Data.ByteString.Char8 as S8
@@ -813,7 +813,7 @@ downloadAndInstallCompiler ghcBuild si wanted@GhcVersion{} versionCheck mbindist
                 _ -> throwM RequireCustomGHCVariant
             case wanted of
                 GhcVersion version ->
-                    return (version, GHCDownloadInfo mempty mempty (DownloadInfo (T.pack bindistURL) Nothing Nothing))
+                    return (version, GHCDownloadInfo mempty mempty (DownloadInfo (T.pack bindistURL) Nothing Nothing Nothing))
                 _ ->
                     throwM WantedMustBeGHC
         _ -> do
@@ -1375,7 +1375,7 @@ setup7z si = do
 
 chattyDownload :: StackMiniM env m
                => Text          -- ^ label
-               -> DownloadInfo  -- ^ URL, content-length, and sha1
+               -> DownloadInfo  -- ^ URL, content-length, and hashes
                -> Path Abs File -- ^ destination
                -> m ()
 chattyDownload label downloadInfo path = do
@@ -1393,20 +1393,15 @@ chattyDownload label downloadInfo path = do
       , T.pack $ toFilePath path
       , " ..."
       ]
-    hashChecks <- case downloadInfoSha1 downloadInfo of
-        Just sha1ByteString -> do
-            let sha1 = CheckHexDigestByteString sha1ByteString
-            $logDebug $ T.concat
-                [ "Will check against sha1 hash: "
-                , T.decodeUtf8With T.lenientDecode sha1ByteString
-                ]
-            return [HashCheck SHA1 sha1]
-        Nothing -> do
-            $logWarn $ T.concat
-                [ "No sha1 found in metadata,"
-                , " download hash won't be checked."
-                ]
-            return []
+    hashChecks <- concat <$> sequence
+      [ chattyHashCheck "sha1" SHA1 (downloadInfoSha1 downloadInfo)
+      , chattyHashCheck "sha256" SHA256 (downloadInfoSha256 downloadInfo)
+      ]
+    when (null hashChecks) $
+      $logWarn $ T.concat
+          [ "No sha1 of sha256 found in metadata,"
+          , " download hash won't be checked."
+          ]
     let dReq = DownloadRequest
             { drRequest = req
             , drHashChecks = hashChecks
@@ -1451,6 +1446,16 @@ chattyDownload label downloadInfo path = do
                  percentage
           where percentage :: Double
                 percentage = fromIntegral totalSoFar / fromIntegral total * 100
+
+    chattyHashCheck name hash maybeValue =
+      case maybeValue of
+         Just hashHexByteString -> do
+             $logDebug $ T.concat
+                 [ "Will check against ", name, " hash: "
+                 , T.decodeUtf8With T.lenientDecode hashHexByteString
+                 ]
+             return [HashCheck hash (CheckHexDigestByteString hashHexByteString)]
+         Nothing -> return []
 
 -- | Given a printf format string for the decimal part and a number of
 -- bytes, formats the bytes using an appropiate unit and returns the

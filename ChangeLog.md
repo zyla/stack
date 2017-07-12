@@ -62,6 +62,7 @@ Other enhancements:
   foo-1.2.3@gitsha1:deadbeef`. Note that this should be considered
   _experimental_, Stack will likely move towards a different hash
   format in the future.
+* Checking SHA256 hash of downloads (for example GHC tarballs) is now supported.
 
 Bug fixes:
 
